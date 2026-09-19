@@ -1,0 +1,86 @@
+{
+  "project_info": {
+    "project_number": "57301029379",
+    "project_id": "hala-talab-4967d",
+    "storage_bucket": "hala-talab-4967d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:57301029379:android:3effef933181e57237f436",
+        "android_client_info": {
+          "package_name": "com.example.hala_talab_full"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9TZ82nGgSSLPxXMAzZQx5lvZnSLxJaLY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:57301029379:android:93835377b3ad58f637f436",
+        "android_client_info": {
+          "package_name": "com.example.hala_talab_partners"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9TZ82nGgSSLPxXMAzZQx5lvZnSLxJaLY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:57301029379:android:9084de163e3f1a5e37f436",
+        "android_client_info": {
+          "package_name": "com.halatalab.customer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9TZ82nGgSSLPxXMAzZQx5lvZnSLxJaLY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:57301029379:android:a48ecdec2674f56337f436",
+        "android_client_info": {
+          "package_name": "com.halatalab.partners"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9TZ82nGgSSLPxXMAzZQx5lvZnSLxJaLY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -8,6 +8,8 @@ workflows:
       app_store_connect: Codemagic
 
     environment:
+      groups:
+        - hala_talab_partners_env
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.halatalab.partners
@@ -26,6 +28,9 @@ workflows:
       - name: Build iOS IPA
         script: |
           flutter build ipa --release \
+            --dart-define="SUPABASE_URL=$SUPABASE_URL" \
+            --dart-define="SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" \
+            --dart-define="MAPBOX_ACCESS_TOKEN=$MAPBOX_ACCESS_TOKEN" \
             --export-options-plist=/Users/builder/export_options.plist
 
     artifacts:
