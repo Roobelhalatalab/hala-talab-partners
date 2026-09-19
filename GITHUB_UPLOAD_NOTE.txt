@@ -1,0 +1,11 @@
+Hala Talab Partners - GitHub upload note
+
+This copy was prepared for GitHub upload.
+The following local signing secrets were intentionally removed:
+- android/key.properties
+- android/hala-talab-partners-upload-key.jks
+
+Do not upload Apple private signing files such as .p8, .p12, .pem, .key, or provisioning profiles.
+Firebase client configuration files and the app's public client configuration remain in the project because the app requires them to build/run; they are not private signing keys.
+
+Keep the removed Android signing files in your private local backup only.

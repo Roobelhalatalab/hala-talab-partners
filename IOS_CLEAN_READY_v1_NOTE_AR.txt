@@ -1,0 +1,43 @@
+هلا طلب – الشركاء / iOS CLEAN READY v1
+تاريخ التجهيز: 2026-09-19
+
+تم تجهيز هذه النسخة من الملف الأصلي المرسل، بدون تعديل وظائف المتجر أو السائق أو lib.
+
+التعديلات المقصودة فقط:
+1) حذف ملفات Flutter المحلية المولدة من Windows:
+   ios/Flutter/Generated.xcconfig
+   ios/Flutter/flutter_export_environment.sh
+   ios/Flutter/ephemeral/
+   .flutter-plugins-dependencies
+
+2) إزالة تكامل CocoaPods القديم من النسخة لأن مشروع Xcode يحتوي بالفعل على FlutterGeneratedPluginSwiftPackage،
+   وسجل Codemagic أكد أن جميع plugins الموجودة على iOS هي Swift Packages، بينما Podfile القديم سبب خطأ:
+   The sandbox is not in sync with the Podfile.lock
+
+   تمت إزالة:
+   ios/Podfile
+   ios/Podfile.lock (إن وجد)
+   ios/Pods/ (إن وجد)
+   ios/.symlinks/ (إن وجد)
+
+3) تثبيت iOS Deployment Target على 15.0 داخل project.pbxproj، وهو نفس الحد الذي رفعه Flutter تلقائياً في سجل Codemagic.
+
+4) تحديث .gitignore لمنع رفع الملفات المحلية/المولدة السابقة مجدداً.
+
+تم الإبقاء على:
+- com.halatalab.partners
+- Runner.entitlements / Push Notifications
+- GoogleService-Info.plist
+- Info.plist وصلاحيات الموقع/الصور/background remote notification
+- App Icon بكل ملفاتها ومنها 1024x1024
+- Swift Package Manager integration داخل Xcode project
+- Run Prepare Flutter Framework Script في Runner.xcscheme
+
+مهم قبل أول Build:
+- في Codemagic اختَر Flutter via Workflow Editor.
+- Build for iOS فقط.
+- Build mode = Release للنشر/TestFlight (وليس Debug).
+- Automatic signing -> App Store -> Hala Talab Partners.
+- App Store Connect publishing بالمفتاح الموجود بالحساب.
+
+هذه النسخة لم يتم تشغيل flutter build عليها داخل بيئة ChatGPT لأن Flutter SDK غير مثبت في بيئة العمل؛ الفحص هنا بنيوي وملفي.

@@ -1,0 +1,42 @@
+﻿قائمة تجهيز Mac لتطبيق هلا طلب - الشركاء
+
+1. الملفات التي ننقلها:
+- آخر نسخة كاملة من مشروع Flutter.
+- مجلد ios كامل.
+- ios/Runner/GoogleService-Info.plist
+- APP_STORE_METADATA_AR.txt
+
+2. الأدوات التي نثبتها على Mac:
+- Xcode
+- Flutter SDK
+- CocoaPods إذا احتاجه المشروع
+- Git
+
+3. الفحوصات الأولى على Mac:
+- flutter doctor
+- flutter pub get
+- flutter analyze
+- flutter build ios --release
+
+4. بيانات النشر المطلوبة:
+- Apple Developer Account
+- Team ID بعد التفعيل
+- Bundle ID: com.halatalab.partners
+- اسم التطبيق: هلا طلب - الشركاء
+
+5. الخدمات:
+- Firebase iOS مربوط بـ com.halatalab.partners
+- Mapbox عبر MAPBOX_ACCESS_TOKEN
+- Waze navigation موجود للسائق
+
+6. بعد نجاح Build:
+- فتح Runner.xcworkspace / مشروع Xcode المناسب
+- ضبط Signing & Capabilities
+- ربط Certificates وProvisioning Profiles
+- Archive
+- رفع إلى TestFlight
+- اختبار على iPhone
+- إرسال App Store Review
+
+ملاحظة:
+لا نضع كلمات مرور أو مفاتيح سرية داخل هذا الملف.
