@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>يستخدم هلا طلب – الشركاء موقعك لتحديد موقع المتجر ومساعدة السائق في الملاحة أثناء التوصيل.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>يستخدم هلا طلب – الشركاء الكاميرا لالتقاط صور المتجر والمنتجات والمستندات عند اختيارك استخدام هذه الميزات.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
