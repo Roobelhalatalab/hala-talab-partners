@@ -267,9 +267,8 @@ class _StoreSetupForm extends StatelessWidget {
       String? required(String? v) => v == null || v.trim().isEmpty ? s.t('requiredField') : null;
 
       Future<void> pickImage(bool logo) async {
-        final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: const ['jpg','jpeg','png','webp'], withData: true);
-        if (result == null || result.files.isEmpty) return;
-        final file = result.files.single;
+        final file = await pickPartnerPhoto();
+        if (file == null) return;
         if (file.bytes == null || file.size > 5 * 1024 * 1024) {
           if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الصورة يجب أن تكون أقل من 5MB')));
           return;

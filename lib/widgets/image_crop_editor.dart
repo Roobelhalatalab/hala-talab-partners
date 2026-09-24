@@ -34,6 +34,7 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
   bool _saving = false;
   double? _sourceAspectRatio;
   Size? _lastViewport;
+  Matrix4? _initialTransform;
 
   @override
   void initState() {
@@ -68,7 +69,8 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
       if (!mounted) return;
       final dx = (viewport.width - imageW) / 2;
       final dy = (viewport.height - imageH) / 2;
-      _transform.value = Matrix4.identity()..translateByDouble(dx, dy, 0.0, 1.0);
+      _initialTransform = Matrix4.identity()..translateByDouble(dx, dy, 0.0, 1.0);
+      _transform.value = Matrix4.copy(_initialTransform!);
     });
   }
 
@@ -175,7 +177,7 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                                 child: InteractiveViewer(
                                   transformationController: _transform,
                                   constrained: false,
-                                  minScale: 1,
+                                  minScale: 0.5,
                                   maxScale: 6,
                                   panEnabled: true,
                                   scaleEnabled: true,
@@ -207,6 +209,13 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                       ),
                     ),
                   ),
+                ),
+                TextButton.icon(
+                  onPressed: _saving || _initialTransform == null
+                      ? null
+                      : () => _transform.value = Matrix4.copy(_initialTransform!),
+                  icon: const Icon(Icons.restart_alt, color: Colors.white),
+                  label: const Text('إرجاع الصورة للحجم الأصلي', style: TextStyle(color: Colors.white)),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),

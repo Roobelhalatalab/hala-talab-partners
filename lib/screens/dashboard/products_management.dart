@@ -888,13 +888,8 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     return null;
   }
   Future<void> _pickImage() async {
-    final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
-      withData: true,
-    );
-    if (r == null || r.files.isEmpty) return;
-    final f = r.files.single;
+    final f = await pickPartnerPhoto();
+    if (f == null) return;
     if (f.size > 5 * 1024 * 1024 || f.bytes == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

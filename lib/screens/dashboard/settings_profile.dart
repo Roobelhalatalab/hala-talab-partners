@@ -669,14 +669,8 @@ class _StoreProfileEditorPageState extends State<_StoreProfileEditorPage> {
     if (_picking) return null;
     setState(() => _picking = true);
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
-        withData: true,
-        allowMultiple: false,
-      );
-      if (!mounted || result == null || result.files.isEmpty) return null;
-      final file = result.files.single;
+      final file = await pickPartnerPhoto();
+      if (!mounted || file == null) return null;
       if (file.bytes == null || file.size > 10 * 1024 * 1024) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

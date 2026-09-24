@@ -14,11 +14,39 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
   List<Map<String, dynamic>> _orders = const [];
   List<Map<String, dynamic>> _reviews = const [];
   Map<String, dynamic> _salesOverview = const {};
+  int _monthlyYear = DateTime.now().year;
+  bool _monthlyLoading = true;
+  String? _monthlyError;
+  List<Map<String, dynamic>> _monthlyCounts = const [];
+  int _monthlyRequest = 0;
+
+  Future<void> _loadMonthly() async {
+    final request = ++_monthlyRequest;
+    final year = _monthlyYear;
+    setState(() {
+      _monthlyLoading = true;
+      _monthlyError = null;
+    });
+    try {
+      final counts = await ReportsRepository.instance.loadMonthlyOrderCounts(year: year);
+      if (!mounted || request != _monthlyRequest) return;
+      setState(() => _monthlyCounts = counts);
+    } catch (_) {
+      if (!mounted || request != _monthlyRequest) return;
+      setState(() => _monthlyError = 'تعذر تحميل التقارير الشهرية. حاول مجدداً.');
+    } finally {
+      if (mounted && request == _monthlyRequest) {
+        setState(() => _monthlyLoading = false);
+      }
+    }
+  }
+
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadMonthly();
   }
 
   Future<void> _load() async {
@@ -181,6 +209,76 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
                               ),
                             const SizedBox(height: 12),
                             Text(s.t('completedOnlyHint'), style: const TextStyle(color: AppColors.muted, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      _ReportSectionCard(
+                        title: 'التقارير الشهرية التفصيلية',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 12,
+                              children: [
+                                const Text('السنة', style: TextStyle(fontWeight: FontWeight.w700)),
+                                DropdownButton<int>(
+                                  value: _monthlyYear,
+                                  items: List.generate(7, (i) => DateTime.now().year - i)
+                                      .map((year) => DropdownMenuItem(value: year, child: Text('$year')))
+                                      .toList(),
+                                  onChanged: (year) {
+                                    if (year == null || year == _monthlyYear) return;
+                                    setState(() => _monthlyYear = year);
+                                    _loadMonthly();
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'تحديث التقارير الشهرية',
+                                  onPressed: _monthlyLoading ? null : _loadMonthly,
+                                  icon: const Icon(Icons.refresh_rounded),
+                                ),
+                              ],
+                            ),
+                            if (_monthlyLoading)
+                              const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Center(child: CircularProgressIndicator()),
+                              )
+                            else if (_monthlyError != null)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                child: Text(_monthlyError!, style: const TextStyle(color: Colors.red)),
+                              )
+                            else ...[
+                              const Text('إجمالي الطلبات يشمل المكتملة والملغاة وغير المكتملة. كل شهر مستقل عن الآخر.'),
+                              const SizedBox(height: 12),
+                              ..._monthlyCounts.map((month) => Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('شهر ${month['month']} / $_monthlyYear',
+                                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 12,
+                                        runSpacing: 6,
+                                        children: [
+                                          Text('الكل: ${month['total']}'),
+                                          Text('المكتملة: ${month['completed']}'),
+                                          Text('الملغاة: ${month['cancelled']}'),
+                                          Text('غير المكتملة: ${month['incomplete']}'),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )),
+                            ],
                           ],
                         ),
                       ),
