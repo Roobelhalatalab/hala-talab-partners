@@ -51,6 +51,20 @@ part 'driver_account_center.dart';
 part 'driver_ratings.dart';
 
 
+/// Shared image picker used by merchant product/store image flows.
+/// Keeping it in the dashboard library makes it available to all `part` files.
+Future<PlatformFile?> pickPartnerPhoto() async {
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+    withData: true,
+    allowMultiple: false,
+  );
+  if (result == null || result.files.isEmpty) return null;
+  return result.files.single;
+}
+
+
 String _partnerLocalIraqiPhone(dynamic value) {
   var digits = (value ?? '').toString().replaceAll(RegExp(r'[^0-9]'), '');
   if (digits.startsWith('00964')) digits = digits.substring(2);
