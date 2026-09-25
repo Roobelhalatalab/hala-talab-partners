@@ -14,11 +14,39 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
   List<Map<String, dynamic>> _orders = const [];
   List<Map<String, dynamic>> _reviews = const [];
   Map<String, dynamic> _salesOverview = const {};
+  int _monthlyYear = DateTime.now().year;
+  bool _monthlyLoading = true;
+  String? _monthlyError;
+  List<Map<String, dynamic>> _monthlyCounts = const [];
+  int _monthlyRequest = 0;
+
+  Future<void> _loadMonthly() async {
+    final request = ++_monthlyRequest;
+    final year = _monthlyYear;
+    setState(() {
+      _monthlyLoading = true;
+      _monthlyError = null;
+    });
+    try {
+      final counts = await ReportsRepository.instance.loadMonthlyOrderCounts(year: year);
+      if (!mounted || request != _monthlyRequest) return;
+      setState(() => _monthlyCounts = counts);
+    } catch (_) {
+      if (!mounted || request != _monthlyRequest) return;
+      setState(() => _monthlyError = 'تعذر تحميل التقارير الشهرية. حاول مجدداً.');
+    } finally {
+      if (mounted && request == _monthlyRequest) {
+        setState(() => _monthlyLoading = false);
+      }
+    }
+  }
+
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadMonthly();
   }
 
   Future<void> _load() async {
@@ -186,6 +214,89 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
                       ),
                       const SizedBox(height: 18),
                       _ReportSectionCard(
+                        title: 'التقارير الشهرية التفصيلية',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 12,
+                              children: [
+                                const Text('السنة', style: TextStyle(fontWeight: FontWeight.w700)),
+                                DropdownButton<int>(
+                                  value: _monthlyYear,
+                                  items: List.generate(7, (i) => DateTime.now().year - i)
+                                      .map((year) => DropdownMenuItem(value: year, child: Text('$year')))
+                                      .toList(),
+                                  onChanged: (year) {
+                                    if (year == null || year == _monthlyYear) return;
+                                    setState(() => _monthlyYear = year);
+                                    _loadMonthly();
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'تحديث التقارير الشهرية',
+                                  onPressed: _monthlyLoading ? null : _loadMonthly,
+                                  icon: const Icon(Icons.refresh_rounded),
+                                ),
+                              ],
+                            ),
+                            if (_monthlyLoading)
+                              const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Center(child: CircularProgressIndicator()),
+                              )
+                            else if (_monthlyError != null)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                child: Text(_monthlyError!, style: const TextStyle(color: Colors.red)),
+                              )
+                            else ...[
+                              const Text('إجمالي الطلبات يشمل المكتملة والملغاة وغير المكتملة. كل شهر مستقل عن الآخر.'),
+                              const SizedBox(height: 12),
+                              ..._monthlyCounts.map((month) => Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              'شهر ${month['month']} / $_monthlyYear',
+                                              style: const TextStyle(fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                          FilledButton.tonalIcon(
+                                            onPressed: () => _openMonthlyOrders(month),
+                                            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                                            label: const Text('فتح'),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 12,
+                                        runSpacing: 6,
+                                        children: [
+                                          Text('الكل: ${month['total']}'),
+                                          Text('المكتملة: ${month['completed']}'),
+                                          Text('الملغاة: ${month['cancelled']}'),
+                                          Text('غير المكتملة: ${month['incomplete']}'),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      _ReportSectionCard(
                         title: s.t('monthlyArchive'),
                         child: _MonthlySalesArchive(
                           rows: _monthlyArchive,
@@ -193,7 +304,6 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
                           emptyText: s.t('noMonthlyArchive'),
                           ordersLabel: s.t('ordersLabel'),
                           salesLabel: s.t('salesLabel'),
-                          onOpenMonth: _openMonthOrders,
                         ),
                       ),
                       const SizedBox(height: 18),
@@ -271,6 +381,21 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
   }
 
 
+  Future<void> _openMonthlyOrders(Map<String, dynamic> month) async {
+    final monthNumber = int.tryParse(month['month']?.toString() ?? '');
+    if (monthNumber == null || monthNumber < 1 || monthNumber > 12) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _MonthlyOrdersPage(
+          year: _monthlyYear,
+          month: monthNumber,
+          initialCounts: Map<String, dynamic>.from(month),
+        ),
+      ),
+    );
+    if (mounted) await _loadMonthly();
+  }
+
   int _overviewInt(String key) => int.tryParse((_salesOverview[key] ?? 0).toString()) ?? 0;
 
   double _overviewMoney(String key) => double.tryParse((_salesOverview[key] ?? 0).toString()) ?? 0;
@@ -281,30 +406,6 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
     return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
   }
 
-
-  Future<void> _openMonthOrders(Map<String, dynamic> row) async {
-    final raw = (row['month_start'] ?? '').toString();
-    final month = DateTime.tryParse(raw)?.toLocal();
-    if (month == null || !mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _MonthlyOrdersPage(
-          month: DateTime(month.year, month.month),
-          monthLabel: _monthNameForContext(context, month),
-          money: (value) => _money(value, AppStrings.of(context)),
-        ),
-      ),
-    );
-  }
-
-  String _monthNameForContext(BuildContext context, DateTime date) {
-    const ar = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
-    const en = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const ku = ['کانوونی دووەم','شوبات','ئازار','نیسان','ئایار','حوزەیران','تەمموز','ئاب','ئەیلوول','تشرینی یەکەم','تشرینی دووەم','کانوونی یەکەم'];
-    final lang = AppStrings.of(context).languageCode;
-    final names = lang == 'en' ? en : lang == 'ku' ? ku : ar;
-    return '${names[date.month - 1]} ${date.year}';
-  }
 
   Future<void> _openRatings() async {
     final s = AppStrings.of(context);
@@ -366,7 +467,7 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
       final items = (order['order_items'] as List?) ?? const [];
       for (final raw in items) {
         final item = Map<String, dynamic>.from(raw as Map);
-        final name = orderItemDisplayName(item);
+        final name = item['product_name']?.toString() ?? '-';
         final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
         final revenue = (item['total_price'] as num?)?.toDouble() ??
             quantity * ((item['unit_price'] as num?)?.toDouble() ?? 0);
@@ -378,6 +479,260 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
     final values = aggregate.values.toList();
     values.sort((a, b) => (b['quantity'] as int).compareTo(a['quantity'] as int));
     return values;
+  }
+}
+
+class _MonthlyOrdersPage extends StatefulWidget {
+  const _MonthlyOrdersPage({
+    required this.year,
+    required this.month,
+    required this.initialCounts,
+  });
+
+  final int year;
+  final int month;
+  final Map<String, dynamic> initialCounts;
+
+  @override
+  State<_MonthlyOrdersPage> createState() => _MonthlyOrdersPageState();
+}
+
+class _MonthlyOrdersPageState extends State<_MonthlyOrdersPage> {
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _orders = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final orders = await ReportsRepository.instance.loadMonthlyOrders(
+        year: widget.year,
+        month: widget.month,
+      );
+      if (!mounted) return;
+      setState(() => _orders = orders);
+    } on PostgrestException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'تعذر تحميل طلبات هذا الشهر. حاول مجدداً.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _statusLabel(String status) {
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'delivered' || normalized == 'completed') return 'مكتمل';
+    if (const {'cancelled', 'canceled', 'rejected'}.contains(normalized)) return 'ملغى';
+    return 'غير مكتمل';
+  }
+
+  Color _statusColor(String status) {
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'delivered' || normalized == 'completed') return const Color(0xFF0F9D68);
+    if (const {'cancelled', 'canceled', 'rejected'}.contains(normalized)) return const Color(0xFFDC2626);
+    return const Color(0xFFB45309);
+  }
+
+  String _formatDate(dynamic raw) {
+    final value = DateTime.tryParse(raw?.toString() ?? '')?.toLocal();
+    if (value == null) return '-';
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    return '$day/$month/${value.year}  $hour:$minute';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final useInitialCounts = _loading && _orders.isEmpty;
+    final total = useInitialCounts
+        ? int.tryParse(widget.initialCounts['total']?.toString() ?? '') ?? 0
+        : _orders.length;
+    final completed = useInitialCounts
+        ? int.tryParse(widget.initialCounts['completed']?.toString() ?? '') ?? 0
+        : _orders.where((order) {
+            final status = order['status']?.toString().trim().toLowerCase() ?? '';
+            return status == 'delivered' || status == 'completed';
+          }).length;
+    final cancelled = useInitialCounts
+        ? int.tryParse(widget.initialCounts['cancelled']?.toString() ?? '') ?? 0
+        : _orders.where((order) {
+            final status = order['status']?.toString().trim().toLowerCase() ?? '';
+            return const {'cancelled', 'canceled', 'rejected'}.contains(status);
+          }).length;
+    final incomplete = useInitialCounts
+        ? int.tryParse(widget.initialCounts['incomplete']?.toString() ?? '') ?? 0
+        : total - completed - cancelled;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FB),
+      appBar: AppBar(
+        title: Text('طلبات شهر ${widget.month} / ${widget.year}'),
+        actions: [
+          IconButton(
+            tooltip: 'تحديث',
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.all(_adaptivePagePadding(context)),
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: const Color(0xFFE8EAEE)),
+                      ),
+                      child: Wrap(
+                        spacing: 16,
+                        runSpacing: 10,
+                        children: [
+                          Text('الكل: $total', style: const TextStyle(fontWeight: FontWeight.w800)),
+                          Text('المكتملة: $completed', style: const TextStyle(fontWeight: FontWeight.w800)),
+                          Text('الملغاة: $cancelled', style: const TextStyle(fontWeight: FontWeight.w800)),
+                          Text('غير المكتملة: $incomplete', style: const TextStyle(fontWeight: FontWeight.w800)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'كل شهر مستقل حسب تاريخ إنشاء الطلب. عند بداية الشهر الجديد يبدأ تقريره من صفر تلقائياً، وتبقى الأشهر السابقة محفوظة.',
+                      style: TextStyle(color: AppColors.muted, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 14),
+                    if (_loading)
+                      const Padding(
+                        padding: EdgeInsets.all(56),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if (_error != null)
+                      _ProductsErrorState(message: _error!, onRetry: _load)
+                    else if (_orders.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 18),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0xFFE8EAEE)),
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(Icons.receipt_long_outlined, size: 42, color: AppColors.muted),
+                            SizedBox(height: 10),
+                            Text('لا توجد طلبات في هذا الشهر', style: TextStyle(fontWeight: FontWeight.w800)),
+                          ],
+                        ),
+                      )
+                    else
+                      ..._orders.map((order) {
+                        final status = order['status']?.toString() ?? 'pending';
+                        final color = _statusColor(status);
+                        final totalValue = (order['total'] as num?)?.toDouble() ?? 0;
+                        final orderNumber = order['order_number']?.toString().trim();
+                        final rawId = order['id']?.toString() ?? '';
+                        final fallbackId = rawId.length > 8 ? rawId.substring(0, 8) : rawId;
+                        final displayNumber = orderNumber == null || orderNumber.isEmpty
+                            ? (fallbackId.isEmpty ? '-' : fallbackId)
+                            : orderNumber;
+                        final items = (order['order_items'] as List?)?.length ?? 0;
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () => showDialog<void>(
+                              context: context,
+                              builder: (_) => _OrderDetailsDialog(order: order),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          'طلب #$displayNumber',
+                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                                        decoration: BoxDecoration(
+                                          color: color.withValues(alpha: .10),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          _statusLabel(status),
+                                          style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 14,
+                                    runSpacing: 6,
+                                    children: [
+                                      Text(_formatDate(order['created_at']), style: const TextStyle(color: AppColors.muted)),
+                                      Text('$items عنصر', style: const TextStyle(color: AppColors.muted)),
+                                      Text('${totalValue.toStringAsFixed(0)} د.ع', style: const TextStyle(fontWeight: FontWeight.w900)),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 9),
+                                  const Align(
+                                    alignment: AlignmentDirectional.centerEnd,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text('فتح التفاصيل', style: TextStyle(fontWeight: FontWeight.w800)),
+                                        SizedBox(width: 4),
+                                        Icon(Icons.chevron_right_rounded, size: 20),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -412,21 +767,12 @@ class _PeriodSalesCard extends StatelessWidget {
 }
 
 class _MonthlySalesArchive extends StatelessWidget {
-  const _MonthlySalesArchive({
-    required this.rows,
-    required this.money,
-    required this.emptyText,
-    required this.ordersLabel,
-    required this.salesLabel,
-    required this.onOpenMonth,
-  });
-
+  const _MonthlySalesArchive({required this.rows, required this.money, required this.emptyText, required this.ordersLabel, required this.salesLabel});
   final List<Map<String, dynamic>> rows;
   final String Function(double) money;
   final String emptyText;
   final String ordersLabel;
   final String salesLabel;
-  final Future<void> Function(Map<String, dynamic> row) onOpenMonth;
 
   String _monthLabel(BuildContext context, String raw) {
     final date = DateTime.tryParse(raw)?.toLocal();
@@ -439,30 +785,16 @@ class _MonthlySalesArchive extends StatelessWidget {
     return '${names[date.month - 1]} ${date.year}';
   }
 
-  String _openLabel(BuildContext context) {
-    final lang = AppStrings.of(context).languageCode;
-    return lang == 'en' ? 'Open' : lang == 'ku' ? 'کردنەوە' : 'فتح';
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (rows.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: Text(emptyText, style: const TextStyle(color: AppColors.muted))),
-      );
-    }
+    if (rows.isEmpty) return Padding(padding: const EdgeInsets.symmetric(vertical: 24), child: Center(child: Text(emptyText, style: const TextStyle(color: AppColors.muted))));
     return Column(children: rows.map((row) {
       final orders = int.tryParse((row['orders_count'] ?? 0).toString()) ?? 0;
       final revenue = double.tryParse((row['revenue'] ?? 0).toString()) ?? 0;
       return Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFAFBFC),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: const Color(0xFFE8EAF0)),
-        ),
+        decoration: BoxDecoration(color: const Color(0xFFFAFBFC), borderRadius: BorderRadius.circular(15), border: Border.all(color: const Color(0xFFE8EAF0))),
         child: LayoutBuilder(builder: (context, constraints) {
           final compact = constraints.maxWidth < 520;
           final details = Column(
@@ -473,11 +805,6 @@ class _MonthlySalesArchive extends StatelessWidget {
               Text('$salesLabel: ${money(revenue)}', style: TextStyle(fontWeight: FontWeight.w900, color: AppColors.green, fontSize: compact ? 12 : 14)),
             ],
           );
-          final openButton = FilledButton.tonalIcon(
-            onPressed: () => onOpenMonth(row),
-            icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-            label: Text(_openLabel(context)),
-          );
           if (compact) {
             return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
@@ -487,8 +814,6 @@ class _MonthlySalesArchive extends StatelessWidget {
               ]),
               const SizedBox(height: 10),
               details,
-              const SizedBox(height: 10),
-              SizedBox(width: double.infinity, child: openButton),
             ]);
           }
           return Row(children: [
@@ -496,176 +821,10 @@ class _MonthlySalesArchive extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(child: Text(_monthLabel(context, (row['month_start'] ?? '').toString()), style: const TextStyle(fontWeight: FontWeight.w900))),
             details,
-            const SizedBox(width: 16),
-            openButton,
           ]);
         }),
       );
     }).toList());
-  }
-}
-
-class _MonthlyOrdersPage extends StatefulWidget {
-  const _MonthlyOrdersPage({
-    required this.month,
-    required this.monthLabel,
-    required this.money,
-  });
-
-  final DateTime month;
-  final String monthLabel;
-  final String Function(double) money;
-
-  @override
-  State<_MonthlyOrdersPage> createState() => _MonthlyOrdersPageState();
-}
-
-class _MonthlyOrdersPageState extends State<_MonthlyOrdersPage> {
-  bool _loading = true;
-  String? _error;
-  List<Map<String, dynamic>> _orders = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final orders = await ReportsRepository.instance.loadMonthOrders(widget.month);
-      if (!mounted) return;
-      setState(() => _orders = orders);
-    } on PostgrestException catch (error) {
-      if (!mounted) return;
-      setState(() => _error = error.message);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  String _localized(BuildContext context, String ar, String ku, String en) {
-    final lang = AppStrings.of(context).languageCode;
-    return lang == 'en' ? en : lang == 'ku' ? ku : ar;
-  }
-
-  String _date(dynamic raw) {
-    final date = DateTime.tryParse(raw?.toString() ?? '')?.toLocal();
-    if (date == null) return '—';
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${two(date.day)}/${two(date.month)}/${date.year}  ${two(date.hour)}:${two(date.minute)}';
-  }
-
-  Future<void> _openDetails(Map<String, dynamic> order) async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => _OrderDetailsDialog(order: order),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = AppStrings.of(context);
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FB),
-      appBar: AppBar(
-        title: Text('${_localized(context, 'طلبات', 'داواکارییەکانی', 'Orders for')} ${widget.monthLabel}'),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : _load,
-            tooltip: s.t('refreshReports'),
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _loading
-            ? ListView(children: const [SizedBox(height: 180), Center(child: CircularProgressIndicator())])
-            : _error != null
-                ? ListView(
-                    padding: const EdgeInsets.all(20),
-                    children: [_ProductsErrorState(message: _error!, onRetry: _load)],
-                  )
-                : _orders.isEmpty
-                    ? ListView(
-                        padding: const EdgeInsets.all(24),
-                        children: [
-                          const SizedBox(height: 100),
-                          const Icon(Icons.receipt_long_outlined, size: 58, color: Color(0xFFB6BBC5)),
-                          const SizedBox(height: 12),
-                          Text(
-                            _localized(context, 'لا توجد طلبات في هذا الشهر', 'لەو مانگەدا هیچ داواکارییەک نییە', 'No orders in this month'),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-                          ),
-                        ],
-                      )
-                    : ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _orders.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (context, index) {
-                          final order = _orders[index];
-                          final number = (order['order_number'] ?? '').toString();
-                          final total = (order['total'] as num?)?.toDouble() ?? 0;
-                          return Material(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(18),
-                            child: InkWell(
-                              onTap: () => _openDetails(order),
-                              borderRadius: BorderRadius.circular(18),
-                              child: Container(
-                                padding: const EdgeInsets.all(15),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(color: const Color(0xFFE7E9ED)),
-                                ),
-                                child: Row(children: [
-                                  Container(
-                                    width: 46,
-                                    height: 46,
-                                    decoration: BoxDecoration(
-                                      color: AppColors.orange.withValues(alpha: .10),
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    child: const Icon(Icons.receipt_long_rounded, color: AppColors.orange),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Row(children: [
-                                          Expanded(
-                                            child: Text(
-                                              '${s.t('orderNumber')} #$number',
-                                              style: const TextStyle(fontWeight: FontWeight.w900),
-                                            ),
-                                          ),
-                                          _OrderStatusBadge(status: order['status']?.toString() ?? 'pending'),
-                                        ]),
-                                        const SizedBox(height: 6),
-                                        Text(_date(order['created_at']), style: const TextStyle(color: AppColors.muted, fontWeight: FontWeight.w600)),
-                                        const SizedBox(height: 5),
-                                        Text(widget.money(total), style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w900)),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
-                                ]),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-      ),
-    );
   }
 }
 

@@ -71,22 +71,94 @@ class ReportsRepository {
     return ReportsSnapshot(orders: orders, reviews: reviews, loadedAt: now);
   }
 
-
-  Future<List<Map<String, dynamic>>> loadMonthOrders(DateTime month) async {
+  /// Counts each order once in the merchant's selected calendar year.
+  /// The half-open local-month range is converted to UTC for created_at queries.
+  /// Pages avoid silently truncating stores with more than 1000 orders.
+  Future<List<Map<String, dynamic>>> loadMonthlyOrderCounts({required int year}) async {
     final store = await AuthService.instance.getCurrentStore();
     final storeId = store?['id']?.toString();
-    if (storeId == null || storeId.isEmpty) return const [];
+    if (storeId == null || storeId.isEmpty) {
+      throw StateError('STORE_NOT_FOUND');
+    }
+    final from = DateTime(year, 1, 1).toUtc().toIso8601String();
+    final until = DateTime(year + 1, 1, 1).toUtc().toIso8601String();
+    const pageSize = 500;
+    final months = List.generate(12, (index) => <String, dynamic>{
+      'month': index + 1,
+      'total': 0,
+      'completed': 0,
+      'cancelled': 0,
+      'incomplete': 0,
+    });
+    for (var offset = 0; ; offset += pageSize) {
+      final page = List<Map<String, dynamic>>.from(await _client
+          .from('orders')
+          .select('id,status,created_at')
+          .eq('store_id', storeId)
+          .gte('created_at', from)
+          .lt('created_at', until)
+          .order('created_at', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + pageSize - 1));
+      for (final order in page) {
+        final created = DateTime.tryParse(order['created_at']?.toString() ?? '')?.toLocal();
+        if (created == null || created.year != year) continue;
+        final month = months[created.month - 1];
+        month['total'] = (month['total'] as int) + 1;
+        final status = order['status']?.toString().trim().toLowerCase() ?? '';
+        final group = status == 'delivered' || status == 'completed'
+            ? 'completed'
+            : const {'cancelled', 'canceled', 'rejected'}.contains(status)
+                ? 'cancelled'
+                : 'incomplete';
+        month[group] = (month[group] as int) + 1;
+      }
+      if (page.length < pageSize) break;
+    }
+    return months;
+  }
 
-    final startLocal = DateTime(month.year, month.month, 1);
-    final endLocal = DateTime(month.year, month.month + 1, 1);
-    final rows = await _client
-        .from('orders')
-        .select('*, order_items(*)')
-        .eq('store_id', storeId)
-        .gte('created_at', startLocal.toUtc().toIso8601String())
-        .lt('created_at', endLocal.toUtc().toIso8601String())
-        .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(rows);
+  /// Loads only the selected store orders that were created inside one
+  /// calendar month.  The month boundaries are built in local time and
+  /// converted to UTC before querying `created_at`, matching the monthly
+  /// counters above.  Pagination prevents Supabase row limits from hiding
+  /// orders in a busy month.
+  Future<List<Map<String, dynamic>>> loadMonthlyOrders({
+    required int year,
+    required int month,
+  }) async {
+    if (month < 1 || month > 12) {
+      throw ArgumentError.value(month, 'month', 'Month must be between 1 and 12');
+    }
+    final store = await AuthService.instance.getCurrentStore();
+    final storeId = store?['id']?.toString();
+    if (storeId == null || storeId.isEmpty) {
+      throw StateError('STORE_NOT_FOUND');
+    }
+
+    final startLocal = DateTime(year, month, 1);
+    final endLocal = month == 12
+        ? DateTime(year + 1, 1, 1)
+        : DateTime(year, month + 1, 1);
+    final from = startLocal.toUtc().toIso8601String();
+    final until = endLocal.toUtc().toIso8601String();
+
+    const pageSize = 500;
+    final result = <Map<String, dynamic>>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final page = List<Map<String, dynamic>>.from(await _client
+          .from('orders')
+          .select('*, order_items(*)')
+          .eq('store_id', storeId)
+          .gte('created_at', from)
+          .lt('created_at', until)
+          .order('created_at', ascending: false)
+          .order('id', ascending: false)
+          .range(offset, offset + pageSize - 1));
+      result.addAll(page);
+      if (page.length < pageSize) break;
+    }
+    return result;
   }
 
   Future<Map<String, dynamic>> loadSalesOverview() async {

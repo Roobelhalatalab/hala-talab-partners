@@ -34,7 +34,7 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
   bool _saving = false;
   double? _sourceAspectRatio;
   Size? _lastViewport;
-  Size? _lastImageSize;
+  Matrix4? _initialTransform;
 
   @override
   void initState() {
@@ -57,63 +57,37 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
   }
 
   @override
-  void didUpdateWidget(covariant PartnerImageCropEditor oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.bytes, widget.bytes) ||
-        oldWidget.aspectRatio != widget.aspectRatio ||
-        oldWidget.preserveWholeImage != widget.preserveWholeImage) {
-      _sourceAspectRatio = null;
-      _lastViewport = null;
-      _lastImageSize = null;
-      _transform.value = Matrix4.identity();
-      _readSourceSize();
-    }
-  }
-
-  @override
   void dispose() {
     _transform.dispose();
     super.dispose();
   }
 
-  Matrix4 _centeredTransform(
-    Size viewport,
-    double imageW,
-    double imageH, {
-    double scale = 1.0,
-  }) {
-    final dx = (viewport.width - (imageW * scale)) / 2;
-    final dy = (viewport.height - (imageH * scale)) / 2;
-    return Matrix4.identity()
-      ..translateByDouble(dx, dy, 0.0, 1.0)
-      ..scaleByDouble(scale, scale, 1.0, 1.0);
-  }
-
   void _centerImage(Size viewport, double imageW, double imageH) {
-    final imageSize = Size(imageW, imageH);
-    if (_lastViewport == viewport && _lastImageSize == imageSize) return;
+    if (_lastViewport == viewport) return;
     _lastViewport = viewport;
-    _lastImageSize = imageSize;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _transform.value = _centeredTransform(viewport, imageW, imageH);
+      final dx = (viewport.width - imageW) / 2;
+      final dy = (viewport.height - imageH) / 2;
+      _initialTransform = Matrix4.identity()..translateByDouble(dx, dy, 0.0, 1.0);
+      _transform.value = Matrix4.copy(_initialTransform!);
     });
   }
 
-  void _snapBackToWholeImageIfNeeded(
-    Size viewport,
-    double imageW,
-    double imageH,
-    double minScale,
-  ) {
-    final currentScale = _transform.value.getMaxScaleOnAxis();
-    if (currentScale > minScale + 0.04) return;
-    _transform.value = _centeredTransform(
-      viewport,
-      imageW,
-      imageH,
-      scale: minScale,
-    );
+  void _zoomBy(double factor) {
+    if (_saving) return;
+    final current = Matrix4.copy(_transform.value);
+    final currentScale = current.getMaxScaleOnAxis();
+    final targetScale = (currentScale * factor).clamp(0.15, 8.0);
+    if (currentScale <= 0) return;
+    final effective = targetScale / currentScale;
+    current.scaleByDouble(effective, effective, effective, 1.0);
+    _transform.value = current;
+  }
+
+  void _resetTransform() {
+    if (_initialTransform == null || _saving) return;
+    _transform.value = Matrix4.copy(_initialTransform!);
   }
 
   Future<void> _save() async {
@@ -196,18 +170,7 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                 imageH = w / sourceAspect;
               }
             }
-            final viewport = Size(w, h);
-            _centerImage(viewport, imageW, imageH);
-
-            // Allow the user to always return to a true "whole image" view.
-            // Cover-first flows can have one source dimension larger than the
-            // frame, so minScale=1 used to create a hard zoom-out stop. The
-            // calculated floor only relaxes that stop; it does not change the
-            // initial crop, upload format, or saved image quality.
-            final fitWholeScale = (w / imageW < h / imageH)
-                ? w / imageW
-                : h / imageH;
-            final minScale = fitWholeScale < 1.0 ? fitWholeScale : 1.0;
+            _centerImage(Size(w, h), imageW, imageH);
 
             final radius = widget.circularFrame ? BorderRadius.circular(w) : BorderRadius.circular(18);
 
@@ -230,18 +193,12 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                                 child: InteractiveViewer(
                                   transformationController: _transform,
                                   constrained: false,
-                                  minScale: minScale,
-                                  maxScale: 6,
-                                  onInteractionEnd: (_) => _snapBackToWholeImageIfNeeded(
-                                    viewport,
-                                    imageW,
-                                    imageH,
-                                    minScale,
-                                  ),
+                                  minScale: 0.15,
+                                  maxScale: 8,
                                   panEnabled: true,
                                   scaleEnabled: true,
                                   clipBehavior: Clip.none,
-                                  boundaryMargin: EdgeInsets.zero,
+                                  boundaryMargin: const EdgeInsets.all(1200),
                                   child: SizedBox(
                                     width: imageW,
                                     height: imageH,
@@ -268,6 +225,28 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                       ),
                     ),
                   ),
+                ),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 6,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _saving ? null : () => _zoomBy(0.8),
+                      icon: const Icon(Icons.remove, color: Colors.white),
+                      label: const Text('إبعاد', style: TextStyle(color: Colors.white)),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _saving ? null : () => _zoomBy(1.25),
+                      icon: const Icon(Icons.add, color: Colors.white),
+                      label: const Text('تقريب', style: TextStyle(color: Colors.white)),
+                    ),
+                    TextButton.icon(
+                      onPressed: _saving || _initialTransform == null ? null : _resetTransform,
+                      icon: const Icon(Icons.restart_alt, color: Colors.white),
+                      label: const Text('إرجاع للحجم الأصلي', style: TextStyle(color: Colors.white)),
+                    ),
+                  ],
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),

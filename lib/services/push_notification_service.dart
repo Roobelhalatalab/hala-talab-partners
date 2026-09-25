@@ -87,7 +87,15 @@ class PushNotificationService with WidgetsBindingObserver {
 
       final messaging = FirebaseMessaging.instance;
       await messaging.setAutoInitEnabled(true);
-      await messaging.requestPermission(alert: true, badge: true, sound: true);
+      final settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
+      debugPrint(
+        'Partner push permission: ${settings.authorizationStatus.name}',
+      );
 
       if (defaultTargetPlatform == TargetPlatform.iOS) {
         await messaging.setForegroundNotificationPresentationOptions(
@@ -95,6 +103,10 @@ class PushNotificationService with WidgetsBindingObserver {
           badge: true,
           sound: true,
         );
+        // APNs registration and the FCM token do not always become available
+        // in the same frame on a real iPhone. Do not give up after a few
+        // hundred milliseconds: the registration retry below intentionally
+        // spans the first ~30 seconds of a cold launch.
       }
 
       // Foreground messages do not automatically display an Android system
@@ -130,19 +142,31 @@ class PushNotificationService with WidgetsBindingObserver {
 
   Future<void> _registerCurrentTokenWithRetry() async {
     _retryTimer?.cancel();
-    // iOS can take several seconds after first launch / reinstall to receive
-    // an APNs token. Keep retrying long enough for that handshake and for a
-    // just-created partner profile to become visible, without blocking UI.
-    for (var attempt = 0; attempt < 12; attempt++) {
+
+    // Real iPhones can take several seconds to expose the APNs token after a
+    // cold start, first install, permission change, or network handover. Keep
+    // retrying long enough to cover that window without blocking app startup.
+    const retryDelays = <Duration>[
+      Duration.zero,
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+      Duration(seconds: 15),
+    ];
+
+    for (var attempt = 0; attempt < retryDelays.length; attempt++) {
+      final delay = retryDelays[attempt];
+      if (delay > Duration.zero) await Future<void>.delayed(delay);
       final registered = await _registerCurrentToken();
       if (registered) return;
-      if (attempt < 11) {
-        await Future<void>.delayed(const Duration(seconds: 1));
-      }
     }
-    // A final delayed retry also covers returning from the notification
-    // permission sheet or a temporarily unavailable network connection.
-    _retryTimer = Timer(const Duration(seconds: 15), () {
+
+    // A final delayed attempt also covers first-login flows where
+    // partner_profiles is committed after the auth event or APNs becomes
+    // available unusually late. Resume/token-refresh/auth events also trigger
+    // registration independently.
+    _retryTimer = Timer(const Duration(seconds: 30), () {
       unawaited(_registerCurrentToken());
     });
   }
@@ -202,6 +226,15 @@ class PushNotificationService with WidgetsBindingObserver {
 
       // On Apple platforms wait for APNs before asking Firebase for its token.
       if (defaultTargetPlatform == TargetPlatform.iOS) {
+        final settings =
+            await FirebaseMessaging.instance.getNotificationSettings();
+        if (settings.authorizationStatus == AuthorizationStatus.denied) {
+          debugPrint(
+            'Partner push token registration blocked: iOS notifications are denied.',
+          );
+          return false;
+        }
+
         final apnsToken = await FirebaseMessaging.instance.getAPNSToken();
         if (apnsToken == null || apnsToken.isEmpty) {
           debugPrint('Partner push token registration waiting for APNs token.');

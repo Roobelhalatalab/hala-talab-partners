@@ -699,6 +699,7 @@ class _StoreProfileEditorPageState extends State<_StoreProfileEditorPage> {
         aspectRatio: logo ? 1.0 : 16 / 9,
         title: logo ? 'ضبط شعار المتجر' : 'ضبط صورة الغلاف',
         circularFrame: logo,
+        preserveWholeImage: true,
       ),
     ));
     if (!mounted || cropped == null) return;

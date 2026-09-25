@@ -3,7 +3,7 @@ import { GoogleAuth } from 'npm:google-auth-library@9.15.1'
 
 type JsonMap = Record<string, unknown>
 
-const PIPELINE_VERSION = '208-fix4-multi-device'
+const PIPELINE_VERSION = '210-ios-push-hardening'
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -171,6 +171,27 @@ Deno.serve(async (req) => {
 
     const results: Array<Record<string, unknown>> = []
     for (const row of distinctTokenRows) {
+      const platform = String(row.platform ?? '').toLowerCase()
+      const platformConfig = platform === 'ios'
+        ? {
+            apns: {
+              headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+              },
+              payload: { aps: { sound: 'default', badge: 1 } },
+            },
+          }
+        : {
+            android: {
+              priority: 'high',
+              notification: {
+                channel_id: 'hala_talab_orders',
+                sound: 'default',
+              },
+            },
+          }
+
       const response = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -179,8 +200,7 @@ Deno.serve(async (req) => {
             token: row.token,
             notification: { title, body },
             data,
-            android: { priority: 'high', notification: { channel_id: 'hala_talab_orders', sound: 'default' } },
-            apns: { payload: { aps: { sound: 'default', badge: 1 } } },
+            ...platformConfig,
           },
         }),
       })

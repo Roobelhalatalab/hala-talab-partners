@@ -7,7 +7,10 @@ import 'package:image_picker/image_picker.dart';
 /// file chooser on Android and desktop. Documents continue to use FilePicker.
 Future<PlatformFile?> pickPartnerPhoto() async {
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-    final photo = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final photo = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      requestFullMetadata: false,
+    );
     if (photo == null) return null;
     final bytes = await photo.readAsBytes();
     return PlatformFile(name: photo.name, size: bytes.length, bytes: bytes);

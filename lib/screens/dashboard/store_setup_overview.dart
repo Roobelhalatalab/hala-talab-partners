@@ -275,7 +275,7 @@ class _StoreSetupForm extends StatelessWidget {
         }
         if (!context.mounted) return;
         final cropped = await Navigator.of(context).push<Uint8List>(MaterialPageRoute(
-          builder: (_) => PartnerImageCropEditor(bytes: file.bytes!, aspectRatio: logo ? 1.0 : 16 / 9, title: logo ? 'ضبط شعار المتجر' : 'ضبط صورة الغلاف', circularFrame: logo),
+          builder: (_) => PartnerImageCropEditor(bytes: file.bytes!, aspectRatio: logo ? 1.0 : 16 / 9, title: logo ? 'ضبط شعار المتجر' : 'ضبط صورة الغلاف', circularFrame: logo, preserveWholeImage: true),
         ));
         if (!context.mounted || cropped == null) return;
         final adjusted = PlatformFile(name: '${logo ? 'logo' : 'cover'}_cropped.png', size: cropped.length, bytes: cropped);
