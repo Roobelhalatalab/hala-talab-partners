@@ -1205,7 +1205,7 @@ class _OrderItemsPreview extends StatelessWidget {
       children: [
         ...visible.map((item) {
           final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
-          final name = item['product_name']?.toString() ?? '-';
+          final name = orderItemDisplayName(item);
           return Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
@@ -1624,7 +1624,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                item['product_name'] as String? ?? '-',
+                                orderItemDisplayName(item),
                                 style: const TextStyle(fontWeight: FontWeight.w900),
                               ),
                               const SizedBox(height: 2),
@@ -1635,6 +1635,18 @@ class _OrderDetailsDialog extends StatelessWidget {
                                   fontSize: 12,
                                 ),
                               ),
+                              if (orderItemVariantLabel(item).isNotEmpty &&
+                                  !(item['product_name']?.toString().toLowerCase() ?? '').contains(orderItemVariantLabel(item).toLowerCase())) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${_mapsText(context, 'الحجم / الخيار', 'قەبارە / هەڵبژاردە', 'Size / option')}: ${orderItemVariantLabel(item)}',
+                                  style: const TextStyle(
+                                    color: AppColors.orangeDark,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
                               if ((item['notes']?.toString() ?? '').trim().isNotEmpty) ...[
                                 const SizedBox(height: 5),
                                 Container(

@@ -130,16 +130,19 @@ class PushNotificationService with WidgetsBindingObserver {
 
   Future<void> _registerCurrentTokenWithRetry() async {
     _retryTimer?.cancel();
-    for (var attempt = 0; attempt < 4; attempt++) {
+    // iOS can take several seconds after first launch / reinstall to receive
+    // an APNs token. Keep retrying long enough for that handshake and for a
+    // just-created partner profile to become visible, without blocking UI.
+    for (var attempt = 0; attempt < 12; attempt++) {
       final registered = await _registerCurrentToken();
       if (registered) return;
-      if (attempt < 3) {
-        await Future<void>.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+      if (attempt < 11) {
+        await Future<void>.delayed(const Duration(seconds: 1));
       }
     }
-    // One delayed retry covers first-login flows where partner_profiles is
-    // committed just after the Supabase auth event.
-    _retryTimer = Timer(const Duration(seconds: 5), () {
+    // A final delayed retry also covers returning from the notification
+    // permission sheet or a temporarily unavailable network connection.
+    _retryTimer = Timer(const Duration(seconds: 15), () {
       unawaited(_registerCurrentToken());
     });
   }
@@ -204,6 +207,7 @@ class PushNotificationService with WidgetsBindingObserver {
           debugPrint('Partner push token registration waiting for APNs token.');
           return false;
         }
+        debugPrint('Partner APNs token is available.');
       }
 
       final token = await FirebaseMessaging.instance.getToken();

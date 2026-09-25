@@ -24,8 +24,8 @@ import '../../services/receipt_printer_service.dart';
 import '../../services/direct_thermal_printer_service.dart';
 import '../../widgets/mapbox_location_preview.dart';
 import '../../widgets/image_crop_editor.dart';
-import '../../widgets/partner_photo_picker.dart';
 import '../../widgets/persistent_network_image.dart';
+import '../../utils/order_item_variant.dart';
 import '../auth/auth_flow.dart' show LanguageMenu;
 
 part 'dashboard_shell.dart';

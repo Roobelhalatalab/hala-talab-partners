@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'direct_thermal_printer_service.dart';
+import '../utils/order_item_variant.dart';
 
 class ReceiptPrinterSettings {
   const ReceiptPrinterSettings({
@@ -786,7 +787,7 @@ class ReceiptPrinterService {
     if (settings.showItems) {
       for (final item in items) {
         final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
-        final name = _cleanReceiptText((item['product_name'] ?? item['name'] ?? '-').toString());
+        final name = _cleanReceiptText(orderItemDisplayName(item));
         final price = ((item['unit_price'] ?? item['price']) as num?)?.toDouble() ?? 0;
         rows.add(
           pw.Row(
