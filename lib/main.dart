@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
@@ -48,16 +50,21 @@ Future<void> main() async {
     publishableKey: SupabaseConfig.publishableKey,
   );
 
-  // Keep Android behavior unchanged. On iOS, request push only after the app
-  // has rendered its first frame.
-  final isIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
-  if (isIOS) {
-    runApp(const HalaTalabPartnersApp());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(PushNotificationService.instance.initialize());
-    });
-  } else {
-    await PushNotificationService.instance.initialize();
-    runApp(const HalaTalabPartnersApp());
+  // Firebase and the background handler are registered before runApp, as
+  // required by the FlutterFire background-messaging lifecycle.
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp();
   }
+  FirebaseMessaging.onBackgroundMessage(
+    halaTalabPartnerFirebaseBackgroundHandler,
+  );
+
+  runApp(const HalaTalabPartnersApp());
+
+  // Ask for visible notification permission only after the first Flutter frame.
+  // This avoids doing UI authorization work during native launch while still
+  // requesting permission immediately on the first visible app screen.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(PushNotificationService.instance.initialize());
+  });
 }

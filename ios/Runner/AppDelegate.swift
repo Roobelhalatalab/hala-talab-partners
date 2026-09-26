@@ -1,19 +1,17 @@
 import Flutter
 import UIKit
-import UserNotifications
-import FirebaseMessaging
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
-  private static let iosPushChannelName = "com.halatalab.partners/ios_push"
+  private static let pushChannelName = "com.halatalab.partners/push_native"
+  private var pushChannel: FlutterMethodChannel?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Keep Flutter/Firebase's normal lifecycle. Firebase is initialized from Dart.
-    // The permission/APNs registration call is invoked only AFTER Dart finishes
-    // Firebase.initializeApp(), so the APNs token cannot race Firebase startup.
+    // Keep Flutter/Firebase's standard lifecycle and method swizzling.
+    // Firebase is initialized from Dart.
     return super.application(
       application,
       didFinishLaunchingWithOptions: launchOptions
@@ -23,68 +21,25 @@ import FirebaseMessaging
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
-    let iosPushChannel = FlutterMethodChannel(
-      name: Self.iosPushChannelName,
+    // The only native responsibility we keep is the Apple-required call to
+    // register with APNs *after* Dart has obtained notification permission.
+    // Permission itself is requested from firebase_messaging in Dart.
+    let channel = FlutterMethodChannel(
+      name: Self.pushChannelName,
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
+    pushChannel = channel
 
-    iosPushChannel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "requestPermissionAndRegister" else {
-        result(FlutterMethodNotImplemented)
-        return
-      }
-      self?.requestPermissionAndRegister(result: result)
-    }
-  }
-
-  private func requestPermissionAndRegister(result: @escaping FlutterResult) {
-    UNUserNotificationCenter.current().requestAuthorization(
-      options: [.alert, .badge, .sound]
-    ) { granted, error in
-      if let error = error {
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "registerForRemoteNotifications":
         DispatchQueue.main.async {
-          result(
-            FlutterError(
-              code: "ios-notification-permission",
-              message: error.localizedDescription,
-              details: nil
-            )
-          )
-        }
-        return
-      }
-
-      DispatchQueue.main.async {
-        if granted {
           UIApplication.shared.registerForRemoteNotifications()
+          result(true)
         }
-        result(granted)
+      default:
+        result(FlutterMethodNotImplemented)
       }
     }
-  }
-
-  override func application(
-    _ application: UIApplication,
-    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-  ) {
-    // Firebase has already been initialized from Dart before registration is
-    // requested. Forward the APNs token explicitly and still preserve Flutter's
-    // normal AppDelegate callback chain.
-    Messaging.messaging().apnsToken = deviceToken
-    super.application(
-      application,
-      didRegisterForRemoteNotificationsWithDeviceToken: deviceToken
-    )
-  }
-
-  override func application(
-    _ application: UIApplication,
-    didFailToRegisterForRemoteNotificationsWithError error: Error
-  ) {
-    print("Hala Talab Partners APNs registration failed: \(error)")
-    super.application(
-      application,
-      didFailToRegisterForRemoteNotificationsWithError: error
-    )
   }
 }
