@@ -38,7 +38,10 @@ class PushNotificationService with WidgetsBindingObserver {
   StreamSubscription<AuthState>? _authSub;
   StreamSubscription<String>? _tokenSub;
   Timer? _retryTimer;
+  Timer? _iosSetupRetryTimer;
   bool _initialized = false;
+  bool _initializing = false;
+  bool _messagingListenersAttached = false;
   final StreamController<PartnerPushEvent> _events =
       StreamController<PartnerPushEvent>.broadcast();
   PartnerPushEvent? _pendingOpenedEvent;
@@ -64,13 +67,102 @@ class PushNotificationService with WidgetsBindingObserver {
           defaultTargetPlatform == TargetPlatform.iOS);
 
   Future<void> initialize() async {
+    if (_initialized || _initializing) return;
+
+    // Build 16 is deliberately iOS-only. Android keeps the Build 15 flow.
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      await _initializeExistingPlatform();
+      return;
+    }
+
+    _initializing = true;
+    WidgetsBinding.instance.addObserver(this);
+
+    try {
+      // FlutterFire may already have a default app. Initialize only if needed.
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+
+      FirebaseMessaging.onBackgroundMessage(
+        halaTalabPartnerFirebaseBackgroundHandler,
+      );
+
+      final messaging = FirebaseMessaging.instance;
+
+      // The native AppDelegate now requests iOS permission independently.
+      // This Dart request is kept as a safe second path and is idempotent after
+      // iOS has already made an authorization decision.
+      final settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
+
+      debugPrint(
+        'Partner iOS push permission: ${settings.authorizationStatus.name}',
+      );
+
+      await messaging.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      await messaging.setAutoInitEnabled(true);
+
+      if (!_messagingListenersAttached) {
+        FirebaseMessaging.onMessage.listen((message) {
+          _emitMessage(message, openedByUser: false);
+        });
+        FirebaseMessaging.onMessageOpenedApp.listen((message) {
+          _emitMessage(message, openedByUser: true);
+        });
+        _tokenSub = messaging.onTokenRefresh.listen((_) {
+          unawaited(_registerCurrentTokenWithRetry());
+        });
+        _authSub =
+            Supabase.instance.client.auth.onAuthStateChange.listen((state) {
+          if (state.session == null) return;
+          unawaited(_registerCurrentTokenWithRetry());
+        });
+        _messagingListenersAttached = true;
+      }
+
+      final initialMessage = await messaging.getInitialMessage();
+      if (initialMessage != null) {
+        _pendingOpenedEvent = PartnerPushEvent(
+          data: Map<String, dynamic>.from(initialMessage.data),
+          openedByUser: true,
+        );
+      }
+
+      // Mark initialized only after Firebase + permission setup actually
+      // completed. Build 15 marked it before the try block, which could make a
+      // one-time startup failure permanent until the next app launch.
+      _initialized = true;
+      _iosSetupRetryTimer?.cancel();
+      _iosSetupRetryTimer = null;
+
+      if (settings.authorizationStatus != AuthorizationStatus.denied) {
+        await _waitForApplePushRegistration(messaging);
+        unawaited(_registerCurrentTokenWithRetry());
+      }
+    } catch (error, stack) {
+      _initialized = false;
+      debugPrint('Partner iOS push setup failed: $error');
+      debugPrintStack(stackTrace: stack);
+      _scheduleIosSetupRetry();
+    } finally {
+      _initializing = false;
+    }
+  }
+
+  Future<void> _initializeExistingPlatform() async {
     if (_initialized) return;
     _initialized = true;
     WidgetsBinding.instance.addObserver(this);
 
-    // firebase_messaging does not provide native Windows push delivery.
-    // Do not let that affect the Store Windows build or its in-app realtime
-    // notifications.
     if (!_supportsFcm) {
       debugPrint(
         'Partner FCM skipped on ${defaultTargetPlatform.name}; '
@@ -79,6 +171,7 @@ class PushNotificationService with WidgetsBindingObserver {
       return;
     }
 
+    // This is the existing Build 15 Android path, kept unchanged.
     try {
       await Firebase.initializeApp();
       FirebaseMessaging.onBackgroundMessage(
@@ -97,23 +190,6 @@ class PushNotificationService with WidgetsBindingObserver {
         'Partner push permission: ${settings.authorizationStatus.name}',
       );
 
-      if (defaultTargetPlatform == TargetPlatform.iOS) {
-        await messaging.setForegroundNotificationPresentationOptions(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
-
-        if (settings.authorizationStatus != AuthorizationStatus.denied) {
-          // After authorization, wait for APNs before the first FCM-token
-          // registration attempt. AppDelegate also explicitly registers APNs.
-          await _waitForApplePushRegistration(messaging);
-        }
-      }
-
-      // Foreground messages do not automatically display an Android system
-      // banner. We still surface them instantly inside the app by emitting a
-      // canonical event; the Driver home refreshes its notification badge/list.
       FirebaseMessaging.onMessage.listen((message) {
         _emitMessage(message, openedByUser: false);
       });
@@ -140,6 +216,23 @@ class PushNotificationService with WidgetsBindingObserver {
       debugPrint('Partner push setup failed: $error');
       debugPrintStack(stackTrace: stack);
     }
+  }
+
+  void _scheduleIosSetupRetry() {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (_iosSetupRetryTimer?.isActive == true) return;
+
+    _iosSetupRetryTimer =
+        Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (_initialized) {
+        timer.cancel();
+        if (identical(_iosSetupRetryTimer, timer)) {
+          _iosSetupRetryTimer = null;
+        }
+        return;
+      }
+      unawaited(initialize());
+    });
   }
 
   Future<void> _waitForApplePushRegistration(
@@ -342,13 +435,18 @@ class PushNotificationService with WidgetsBindingObserver {
     // to the same account on other devices: Hala Talab supports multi-device
     // Store/Driver sessions and push fan-out to every valid token.
     if (state == AppLifecycleState.resumed && _supportsFcm) {
-      unawaited(_registerCurrentTokenWithRetry());
+      if (defaultTargetPlatform == TargetPlatform.iOS && !_initialized) {
+        unawaited(initialize());
+      } else {
+        unawaited(_registerCurrentTokenWithRetry());
+      }
     }
   }
 
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
     _retryTimer?.cancel();
+    _iosSetupRetryTimer?.cancel();
     await _authSub?.cancel();
     await _tokenSub?.cancel();
   }

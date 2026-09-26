@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -7,11 +8,33 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // firebase_messaging uses Firebase method swizzling (enabled in Info.plist)
-    // to map the APNs device token to the FCM registration token. Keep the
-    // standard FlutterAppDelegate lifecycle so APNs registration happens after
-    // Firebase Messaging is initialized/requested by Dart.
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    // Keep Flutter/Firebase's normal lifecycle. Do not manually configure
+    // Firebase or replace FlutterAppDelegate's notification delegate.
+    let launched = super.application(
+      application,
+      didFinishLaunchingWithOptions: launchOptions
+    )
+
+    // Build 16 iOS-only fallback:
+    // Ask iOS itself for notification authorization independently of Firebase
+    // startup. If authorization already has a decision, iOS returns it without
+    // showing a second prompt. If allowed, explicitly register with APNs.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+      UNUserNotificationCenter.current().requestAuthorization(
+        options: [.alert, .badge, .sound]
+      ) { granted, error in
+        if let error = error {
+          print("Hala Talab Partners notification permission error: \(error)")
+        }
+        if granted {
+          DispatchQueue.main.async {
+            application.registerForRemoteNotifications()
+          }
+        }
+      }
+    }
+
+    return launched
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
