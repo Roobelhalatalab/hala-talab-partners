@@ -172,14 +172,26 @@ Deno.serve(async (req) => {
     const results: Array<Record<string, unknown>> = []
     for (const row of distinctTokenRows) {
       const platform = String(row.platform ?? '').toLowerCase()
+      const apnsTopic = role === 'customer'
+        ? 'com.halatalab.customer'
+        : 'com.halatalab.partners'
       const platformConfig = platform === 'ios'
         ? {
             apns: {
               headers: {
                 'apns-priority': '10',
                 'apns-push-type': 'alert',
+                // The same Edge Function serves Customer + Partners. APNs
+                // requires the topic to match the app that owns the FCM token.
+                'apns-topic': apnsTopic,
               },
-              payload: { aps: { sound: 'default', badge: 1 } },
+              payload: {
+                aps: {
+                  alert: { title, body },
+                  sound: 'default',
+                  badge: 1,
+                },
+              },
             },
           }
         : {

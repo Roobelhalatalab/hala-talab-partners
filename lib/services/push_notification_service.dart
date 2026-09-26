@@ -126,7 +126,7 @@ class PushNotificationService with WidgetsBindingObserver {
         );
       }
 
-      await _registerCurrentTokenWithRetry();
+      unawaited(_registerCurrentTokenWithRetry());
       _tokenSub = messaging.onTokenRefresh.listen((_) {
         unawaited(_registerCurrentTokenWithRetry());
       });
@@ -166,8 +166,14 @@ class PushNotificationService with WidgetsBindingObserver {
     // partner_profiles is committed after the auth event or APNs becomes
     // available unusually late. Resume/token-refresh/auth events also trigger
     // registration independently.
-    _retryTimer = Timer(const Duration(seconds: 30), () {
-      unawaited(_registerCurrentToken());
+    _retryTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      unawaited(() async {
+        final registered = await _registerCurrentToken();
+        if (registered) {
+          timer.cancel();
+          if (identical(_retryTimer, timer)) _retryTimer = null;
+        }
+      }());
     });
   }
 
@@ -248,6 +254,11 @@ class PushNotificationService with WidgetsBindingObserver {
 
       final installationId = await _installationId();
       final now = DateTime.now().toUtc().toIso8601String();
+      final platform = defaultTargetPlatform == TargetPlatform.iOS
+          ? 'ios'
+          : defaultTargetPlatform == TargetPlatform.android
+              ? 'android'
+              : defaultTargetPlatform.name.toLowerCase();
 
       // Stage 208 Fix 4: register one row per physical app installation. The
       // server RPC atomically rotates the token for THIS installation only and
@@ -257,7 +268,7 @@ class PushNotificationService with WidgetsBindingObserver {
       try {
         await Supabase.instance.client.rpc('register_device_push_token', params: {
           'p_role': role,
-          'p_platform': defaultTargetPlatform.name,
+          'p_platform': platform,
           'p_token': token,
           'p_installation_id': installationId,
         });
@@ -269,7 +280,7 @@ class PushNotificationService with WidgetsBindingObserver {
         await Supabase.instance.client.from('device_push_tokens').upsert({
           'user_id': user.id,
           'role': role,
-          'platform': defaultTargetPlatform.name,
+          'platform': platform,
           'token': token,
           'updated_at': now,
         }, onConflict: 'token');
@@ -277,7 +288,7 @@ class PushNotificationService with WidgetsBindingObserver {
 
       debugPrint(
         'Partner push token registered: role=$role '
-        'platform=${defaultTargetPlatform.name} installation=$installationId',
+        'platform=$platform installation=$installationId',
       );
       return true;
     } catch (error) {

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -18,10 +19,8 @@ class PartnerImageCropEditor extends StatefulWidget {
   final String title;
   final bool circularFrame;
 
-  /// When true, the editor starts with the whole source image visible inside
-  /// the target frame. The merchant can still zoom in and reposition it.
-  /// This is useful for product/category photos coming from phones in arbitrary
-  /// portrait, landscape, or square aspect ratios.
+  /// Existing callers use this for product/category/store photos. The source
+  /// starts fully visible; the merchant can then zoom in/out and pan freely.
   final bool preserveWholeImage;
 
   @override
@@ -31,30 +30,12 @@ class PartnerImageCropEditor extends StatefulWidget {
 class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
   final GlobalKey _captureKey = GlobalKey();
   final TransformationController _transform = TransformationController();
+
   bool _saving = false;
-  double? _sourceAspectRatio;
-  Size? _lastViewport;
-  Matrix4? _initialTransform;
+  Size _viewportSize = Size.zero;
 
-  @override
-  void initState() {
-    super.initState();
-    _readSourceSize();
-  }
-
-  Future<void> _readSourceSize() async {
-    try {
-      final codec = await ui.instantiateImageCodec(widget.bytes);
-      final frame = await codec.getNextFrame();
-      final image = frame.image;
-      final ratio = image.width / image.height;
-      image.dispose();
-      codec.dispose();
-      if (mounted) setState(() => _sourceAspectRatio = ratio);
-    } catch (_) {
-      if (mounted) setState(() => _sourceAspectRatio = widget.aspectRatio);
-    }
-  }
+  static const double _minScale = 0.25;
+  static const double _maxScale = 8.0;
 
   @override
   void dispose() {
@@ -62,32 +43,33 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
     super.dispose();
   }
 
-  void _centerImage(Size viewport, double imageW, double imageH) {
-    if (_lastViewport == viewport) return;
-    _lastViewport = viewport;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final dx = (viewport.width - imageW) / 2;
-      final dy = (viewport.height - imageH) / 2;
-      _initialTransform = Matrix4.identity()..translateByDouble(dx, dy, 0.0, 1.0);
-      _transform.value = Matrix4.copy(_initialTransform!);
-    });
+  void _resetTransform() {
+    if (_saving) return;
+    _transform.value = Matrix4.identity();
   }
 
   void _zoomBy(double factor) {
-    if (_saving) return;
-    final current = Matrix4.copy(_transform.value);
-    final currentScale = current.getMaxScaleOnAxis();
-    final targetScale = (currentScale * factor).clamp(0.15, 8.0);
-    if (currentScale <= 0) return;
-    final effective = targetScale / currentScale;
-    current.scaleByDouble(effective, effective, effective, 1.0);
-    _transform.value = current;
-  }
+    if (_saving || _viewportSize.isEmpty) return;
 
-  void _resetTransform() {
-    if (_initialTransform == null || _saving) return;
-    _transform.value = Matrix4.copy(_initialTransform!);
+    final current = _transform.value;
+    final currentScale = current.getMaxScaleOnAxis();
+    if (!currentScale.isFinite || currentScale <= 0) return;
+
+    final targetScale =
+        (currentScale * factor).clamp(_minScale, _maxScale).toDouble();
+    if ((targetScale - currentScale).abs() < 0.0001) return;
+
+    // Preserve the current pan while scaling around the visible frame centre.
+    // This avoids the old behaviour where +/- zoom drifted toward the corner.
+    final ratio = targetScale / currentScale;
+    final translation = current.getTranslation();
+    final centerX = _viewportSize.width / 2;
+    final centerY = _viewportSize.height / 2;
+    final nextX = ratio * translation.x + (1 - ratio) * centerX;
+    final nextY = ratio * translation.y + (1 - ratio) * centerY;
+
+    _transform.value = Matrix4.diagonal3Values(targetScale, targetScale, 1)
+      ..setTranslationRaw(nextX, nextY, 0);
   }
 
   Future<void> _save() async {
@@ -95,15 +77,16 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
     setState(() => _saving = true);
     try {
       await WidgetsBinding.instance.endOfFrame;
-      final boundary = _captureKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      final boundary =
+          _captureKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
-      // Upload-friendly output: the old 2.2x capture created unnecessarily large
-      // PNG files (up to ~1584 px on a 720 px crop). 1.25x keeps product,
-      // category, logo and cover images sharp while cutting transfer/decode cost.
-      final image = await boundary.toImage(pixelRatio: 1.25);
+
+      final image = await boundary.toImage(pixelRatio: 1.5);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
-      if (mounted && data != null) Navigator.of(context).pop(data.buffer.asUint8List());
+      if (mounted && data != null) {
+        Navigator.of(context).pop(data.buffer.asUint8List());
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -121,66 +104,46 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
           TextButton(
             onPressed: _saving ? null : _save,
             child: _saving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('حفظ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text(
+                    'حفظ',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
           ),
         ],
       ),
       body: SafeArea(
         child: LayoutBuilder(
-          builder: (context, c) {
-            final maxW = (c.maxWidth - 28).clamp(220.0, 720.0);
-            final maxH = (c.maxHeight - 112).clamp(220.0, 720.0);
-            double w = maxW;
-            double h = w / widget.aspectRatio;
-            if (h > maxH) {
-              h = maxH;
-              w = h * widget.aspectRatio;
-            }
+          builder: (context, constraints) {
+            final maxW = (constraints.maxWidth - 28).clamp(220.0, 720.0);
+            final maxH = (constraints.maxHeight - 112).clamp(220.0, 720.0);
 
-            final sourceAspect = _sourceAspectRatio;
-            if (sourceAspect == null) {
-              return const Center(child: CircularProgressIndicator(color: Colors.white));
+            double width = maxW;
+            double height = width / widget.aspectRatio;
+            if (height > maxH) {
+              height = maxH;
+              width = height * widget.aspectRatio;
             }
+            _viewportSize = Size(width, height);
 
-            // Product/category photos may come from any phone camera ratio.
-            // For those flows, start with the *whole* source visible so a tall
-            // or very wide photo is never cropped automatically. The merchant
-            // can still pinch to zoom and pan if they prefer a tighter crop.
-            //
-            // Other existing flows (store logo/cover) keep the previous
-            // cover-first behavior to avoid changing already-approved UI.
-            final cropAspect = w / h;
-            final double imageW;
-            final double imageH;
-            if (widget.preserveWholeImage) {
-              if (sourceAspect >= cropAspect) {
-                imageW = w;
-                imageH = w / sourceAspect;
-              } else {
-                imageH = h;
-                imageW = h * sourceAspect;
-              }
-            } else {
-              if (sourceAspect >= cropAspect) {
-                imageH = h;
-                imageW = h * sourceAspect;
-              } else {
-                imageW = w;
-                imageH = w / sourceAspect;
-              }
-            }
-            _centerImage(Size(w, h), imageW, imageH);
-
-            final radius = widget.circularFrame ? BorderRadius.circular(w) : BorderRadius.circular(18);
+            final radius = widget.circularFrame
+                ? BorderRadius.circular(width)
+                : BorderRadius.circular(18);
 
             return Column(
               children: [
                 Expanded(
                   child: Center(
                     child: SizedBox(
-                      width: w,
-                      height: h,
+                      width: width,
+                      height: height,
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
@@ -192,19 +155,23 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                                 color: Colors.white,
                                 child: InteractiveViewer(
                                   transformationController: _transform,
-                                  constrained: false,
-                                  minScale: 0.15,
-                                  maxScale: 8,
+                                  minScale: _minScale,
+                                  maxScale: _maxScale,
                                   panEnabled: true,
                                   scaleEnabled: true,
+                                  boundaryMargin: const EdgeInsets.all(1600),
                                   clipBehavior: Clip.none,
-                                  boundaryMargin: const EdgeInsets.all(1200),
                                   child: SizedBox(
-                                    width: imageW,
-                                    height: imageH,
+                                    width: width,
+                                    height: height,
                                     child: Image.memory(
                                       widget.bytes,
-                                      fit: BoxFit.fill,
+                                      // Always start with the complete image
+                                      // visible. The merchant decides how much
+                                      // to zoom/crop, on both Android and iOS.
+                                      fit: widget.preserveWholeImage
+                                          ? BoxFit.contain
+                                          : BoxFit.cover,
                                       filterQuality: FilterQuality.high,
                                       gaplessPlayback: true,
                                     ),
@@ -234,28 +201,35 @@ class _PartnerImageCropEditorState extends State<PartnerImageCropEditor> {
                     OutlinedButton.icon(
                       onPressed: _saving ? null : () => _zoomBy(0.8),
                       icon: const Icon(Icons.remove, color: Colors.white),
-                      label: const Text('إبعاد', style: TextStyle(color: Colors.white)),
+                      label: const Text(
+                        'إبعاد',
+                        style: TextStyle(color: Colors.white),
+                      ),
                     ),
                     OutlinedButton.icon(
                       onPressed: _saving ? null : () => _zoomBy(1.25),
                       icon: const Icon(Icons.add, color: Colors.white),
-                      label: const Text('تقريب', style: TextStyle(color: Colors.white)),
+                      label: const Text(
+                        'تقريب',
+                        style: TextStyle(color: Colors.white),
+                      ),
                     ),
                     TextButton.icon(
-                      onPressed: _saving || _initialTransform == null ? null : _resetTransform,
+                      onPressed: _saving ? null : _resetTransform,
                       icon: const Icon(Icons.restart_alt, color: Colors.white),
-                      label: const Text('إرجاع للحجم الأصلي', style: TextStyle(color: Colors.white)),
+                      label: const Text(
+                        'إرجاع للحجم الأصلي',
+                        style: TextStyle(color: Colors.white),
+                      ),
                     ),
                   ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 10, 20, 20),
                   child: Text(
-                    widget.preserveWholeImage
-                        ? 'الصورة تظهر كاملة أولاً. كبّرها أو حرّكها فقط إذا تريد قصاً أقرب داخل الإطار.'
-                        : 'حرّك الصورة وكبّرها أو صغّرها حتى يظهر الجزء المطلوب داخل الإطار.',
+                    'استخدم إصبعين للتقريب والإبعاد، واسحب الصورة لاختيار الجزء الذي تريد ظهوره.',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
+                    style: TextStyle(color: Colors.white70),
                   ),
                 ),
               ],

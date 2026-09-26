@@ -7,15 +7,11 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    let launched = super.application(
-      application,
-      didFinishLaunchingWithOptions: launchOptions
-    )
-    // Explicit APNs registration is safe even before the notification prompt
-    // is answered and makes the native device token available as early as
-    // possible for Firebase Messaging on real iPhone/iPad devices.
-    application.registerForRemoteNotifications()
-    return launched
+    // firebase_messaging uses Firebase method swizzling (enabled in Info.plist)
+    // to map the APNs device token to the FCM registration token. Keep the
+    // standard FlutterAppDelegate lifecycle so APNs registration happens after
+    // Firebase Messaging is initialized/requested by Dart.
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
