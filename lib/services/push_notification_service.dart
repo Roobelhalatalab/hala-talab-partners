@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,6 +35,9 @@ class PushNotificationService with WidgetsBindingObserver {
   PushNotificationService._();
 
   static final instance = PushNotificationService._();
+
+  static const MethodChannel _iosPushChannel =
+      MethodChannel('com.halatalab.partners/ios_push');
 
   StreamSubscription<AuthState>? _authSub;
   StreamSubscription<String>? _tokenSub;
@@ -66,6 +70,22 @@ class PushNotificationService with WidgetsBindingObserver {
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS);
 
+  Future<void> _requestIosPermissionAndRegisterApns() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+
+    try {
+      await _iosPushChannel.invokeMethod<bool>(
+        'requestPermissionAndRegister',
+      );
+    } on PlatformException catch (error) {
+      debugPrint(
+        'Partner native iOS push registration failed: '
+        '${error.code} ${error.message}',
+      );
+      rethrow;
+    }
+  }
+
   Future<void> initialize() async {
     if (_initialized || _initializing) return;
 
@@ -89,10 +109,18 @@ class PushNotificationService with WidgetsBindingObserver {
       );
 
       final messaging = FirebaseMessaging.instance;
+      await messaging.setAutoInitEnabled(true);
 
-      // The native AppDelegate now requests iOS permission independently.
-      // This Dart request is kept as a safe second path and is idempotent after
-      // iOS has already made an authorization decision.
+      // Critical iOS order:
+      // 1) Firebase is initialized.
+      // 2) Firebase Messaging auto-init is enabled.
+      // 3) Native iOS asks permission and registers with APNs.
+      // This restores the system permission dialog on first install while
+      // preventing APNs registration from racing Firebase startup.
+      await _requestIosPermissionAndRegisterApns();
+
+      // Read/confirm the authorization state through FlutterFire too. If the
+      // user already answered the native prompt, this is idempotent.
       final settings = await messaging.requestPermission(
         alert: true,
         badge: true,
@@ -109,7 +137,6 @@ class PushNotificationService with WidgetsBindingObserver {
         badge: true,
         sound: true,
       );
-      await messaging.setAutoInitEnabled(true);
 
       if (!_messagingListenersAttached) {
         FirebaseMessaging.onMessage.listen((message) {
@@ -373,6 +400,9 @@ class PushNotificationService with WidgetsBindingObserver {
         final apnsToken = await FirebaseMessaging.instance.getAPNSToken();
         if (apnsToken == null || apnsToken.isEmpty) {
           debugPrint('Partner push token registration waiting for APNs token.');
+          try {
+            await _requestIosPermissionAndRegisterApns();
+          } catch (_) {}
           return false;
         }
         debugPrint('Partner APNs token is available.');
