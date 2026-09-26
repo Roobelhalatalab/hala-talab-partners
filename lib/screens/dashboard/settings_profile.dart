@@ -669,7 +669,7 @@ class _StoreProfileEditorPageState extends State<_StoreProfileEditorPage> {
     if (_picking) return null;
     setState(() => _picking = true);
     try {
-      final file = await pickPartnerPhoto();
+      final file = await pickPartnerPhotoFromGallery();
       if (!mounted || file == null) return null;
       if (file.bytes == null || file.size > 10 * 1024 * 1024) {
         if (mounted) {

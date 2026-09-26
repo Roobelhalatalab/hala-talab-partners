@@ -129,7 +129,7 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
     }
 
     Future<void> pickCategoryImage(StateSetter setLocal) async {
-      final file = await pickPartnerPhoto();
+      final file = await pickPartnerPhotoFromGallery();
       if (!mounted || file == null) return;
       if (file.bytes == null || file.size > 5 * 1024 * 1024) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_p55(context, 'الصورة يجب أن تكون أقل من 5MB', 'وێنەکە دەبێت کەمتر لە 5MB بێت', 'Image must be under 5MB'))));

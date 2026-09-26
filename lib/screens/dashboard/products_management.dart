@@ -888,7 +888,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     return null;
   }
   Future<void> _pickImage() async {
-    final f = await pickPartnerPhoto();
+    final f = await pickPartnerPhotoFromGallery();
     if (f == null) return;
     if (f.size > 5 * 1024 * 1024 || f.bytes == null) {
       if (mounted) {

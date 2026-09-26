@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
@@ -45,6 +47,17 @@ Future<void> main() async {
     url: SupabaseConfig.url,
     publishableKey: SupabaseConfig.publishableKey,
   );
-  await PushNotificationService.instance.initialize();
-  runApp(const HalaTalabPartnersApp());
+
+  // Keep Android behavior unchanged. On iOS, request push only after the app
+  // has rendered its first frame.
+  final isIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  if (isIOS) {
+    runApp(const HalaTalabPartnersApp());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(PushNotificationService.instance.initialize());
+    });
+  } else {
+    await PushNotificationService.instance.initialize();
+    runApp(const HalaTalabPartnersApp());
+  }
 }

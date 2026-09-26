@@ -103,10 +103,12 @@ class PushNotificationService with WidgetsBindingObserver {
           badge: true,
           sound: true,
         );
-        // APNs registration and the FCM token do not always become available
-        // in the same frame on a real iPhone. Do not give up after a few
-        // hundred milliseconds: the registration retry below intentionally
-        // spans the first ~30 seconds of a cold launch.
+
+        if (settings.authorizationStatus != AuthorizationStatus.denied) {
+          // After authorization, wait for APNs before the first FCM-token
+          // registration attempt. AppDelegate also explicitly registers APNs.
+          await _waitForApplePushRegistration(messaging);
+        }
       }
 
       // Foreground messages do not automatically display an Android system
@@ -138,6 +140,40 @@ class PushNotificationService with WidgetsBindingObserver {
       debugPrint('Partner push setup failed: $error');
       debugPrintStack(stackTrace: stack);
     }
+  }
+
+  Future<void> _waitForApplePushRegistration(
+    FirebaseMessaging messaging,
+  ) async {
+    // A real iPhone may need a few seconds before APNs exposes its device token.
+    const delays = <Duration>[
+      Duration.zero,
+      Duration(milliseconds: 500),
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 3),
+      Duration(seconds: 5),
+      Duration(seconds: 8),
+    ];
+
+    for (final delay in delays) {
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      try {
+        final apnsToken = await messaging.getAPNSToken();
+        if (apnsToken != null && apnsToken.isNotEmpty) {
+          debugPrint('Partner APNs registration ready.');
+          return;
+        }
+      } catch (error) {
+        debugPrint('Partner APNs token check waiting: $error');
+      }
+    }
+
+    debugPrint(
+      'Partner APNs token not ready yet; background retry will continue.',
+    );
   }
 
   Future<void> _registerCurrentTokenWithRetry() async {
