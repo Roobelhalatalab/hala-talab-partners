@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -50,20 +49,17 @@ Future<void> main() async {
     publishableKey: SupabaseConfig.publishableKey,
   );
 
-  // Firebase and the background handler are registered before runApp, as
-  // required by the FlutterFire background-messaging lifecycle.
-  if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp();
-  }
+  // Register the top-level background handler before runApp, as recommended
+  // by FlutterFire. This registration is synchronous and does not initialize
+  // Firebase or block the app launch.
   FirebaseMessaging.onBackgroundMessage(
     halaTalabPartnerFirebaseBackgroundHandler,
   );
 
+  // Keep app launch independent from Firebase/APNs. The UI must open even if
+  // push setup is slow or temporarily unavailable.
   runApp(const HalaTalabPartnersApp());
 
-  // Ask for visible notification permission only after the first Flutter frame.
-  // This avoids doing UI authorization work during native launch while still
-  // requesting permission immediately on the first visible app screen.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(PushNotificationService.instance.initialize());
   });

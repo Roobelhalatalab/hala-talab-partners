@@ -4,7 +4,6 @@ import 'dart:math';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -13,8 +12,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 Future<void> halaTalabPartnerFirebaseBackgroundHandler(
   RemoteMessage message,
 ) async {
-  if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp();
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+  } catch (_) {
+    // Never crash a background delivery path because Firebase initialization
+    // is temporarily unavailable.
   }
 }
 
@@ -37,9 +41,6 @@ class PushNotificationService with WidgetsBindingObserver {
 
   static final PushNotificationService instance = PushNotificationService._();
 
-  static const MethodChannel _nativePushChannel =
-      MethodChannel('com.halatalab.partners/push_native');
-
   static const String _installationIdPrefKey =
       'hala_talab_partner_push_installation_id_v2';
 
@@ -51,7 +52,9 @@ class PushNotificationService with WidgetsBindingObserver {
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
   StreamSubscription<RemoteMessage>? _openedSubscription;
 
-  Timer? _retryTimer;
+  Timer? _setupRetryTimer;
+  Timer? _tokenRetryTimer;
+
   PartnerPushEvent? _pendingOpenedEvent;
 
   bool _initialized = false;
@@ -86,8 +89,8 @@ class PushNotificationService with WidgetsBindingObserver {
 
     if (!_supportsFcm) {
       debugPrint(
-        'Partner push skipped on ${defaultTargetPlatform.name}; '
-        'Supabase in-app notifications stay active.',
+        'Partner FCM skipped on ${defaultTargetPlatform.name}; '
+        'Supabase in-app notifications remain enabled.',
       );
       _initialized = true;
       _initializing = false;
@@ -95,14 +98,42 @@ class PushNotificationService with WidgetsBindingObserver {
     }
 
     try {
-      // main.dart initializes Firebase and registers the background handler
-      // before runApp. Keep this as a defensive guard only.
+      // Important: this runs AFTER runApp/first frame, so a Firebase/APNs issue
+      // can never hold the application on the launch screen.
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp();
+        await Firebase.initializeApp().timeout(
+          const Duration(seconds: 15),
+        );
       }
 
+      // The background handler is registered in main.dart before runApp.
       final messaging = FirebaseMessaging.instance;
       await messaging.setAutoInitEnabled(true);
+
+      // requestPermission() is the FlutterFire-supported Apple permission API.
+      // On iOS it presents the system authorization sheet when status is
+      // notDetermined. No native notification permission workaround is used.
+      final settings = await messaging.requestPermission(
+        alert: true,
+        announcement: false,
+        badge: true,
+        carPlay: false,
+        criticalAlert: false,
+        provisional: false,
+        sound: true,
+      );
+
+      debugPrint(
+        'Partner push permission: ${settings.authorizationStatus.name}',
+      );
+
+      if (_isIOS) {
+        await messaging.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+      }
 
       _foregroundSubscription ??= FirebaseMessaging.onMessage.listen(
         (message) => _emitMessage(message, openedByUser: false),
@@ -120,16 +151,6 @@ class PushNotificationService with WidgetsBindingObserver {
         );
       }
 
-      if (_isIOS) {
-        await _configureIOS(messaging);
-      } else {
-        await messaging.requestPermission(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
-      }
-
       _tokenSubscription ??= messaging.onTokenRefresh.listen((_) {
         unawaited(syncCurrentInstallation());
       });
@@ -142,92 +163,27 @@ class PushNotificationService with WidgetsBindingObserver {
       });
 
       _initialized = true;
+      _setupRetryTimer?.cancel();
+      _setupRetryTimer = null;
+
       unawaited(syncCurrentInstallation());
     } catch (error, stackTrace) {
       _initialized = false;
       debugPrint('Partner push initialization failed: $error');
       debugPrintStack(stackTrace: stackTrace);
-      _scheduleInitializationRetry();
+      _scheduleSetupRetry();
     } finally {
       _initializing = false;
     }
   }
 
-  void _scheduleInitializationRetry() {
-    if (_retryTimer?.isActive == true) return;
+  void _scheduleSetupRetry() {
+    if (_setupRetryTimer?.isActive == true) return;
 
-    _retryTimer = Timer(const Duration(seconds: 15), () {
-      _retryTimer = null;
+    _setupRetryTimer = Timer(const Duration(seconds: 20), () {
+      _setupRetryTimer = null;
       unawaited(initialize());
     });
-  }
-
-  Future<void> _configureIOS(FirebaseMessaging messaging) async {
-    final settings = await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-      announcement: false,
-      carPlay: false,
-      criticalAlert: false,
-    );
-
-    debugPrint(
-      'Partner iOS notification permission: '
-      '${settings.authorizationStatus.name}',
-    );
-
-    await messaging.setForegroundNotificationPresentationOptions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-
-    if (settings.authorizationStatus == AuthorizationStatus.denied) {
-      debugPrint('Partner iOS notifications are denied by the user.');
-      return;
-    }
-
-    // Apple requires explicit APNs registration after permission.
-    // Keep this tiny native call separate from Firebase initialization.
-    try {
-      await _nativePushChannel.invokeMethod<bool>(
-        'registerForRemoteNotifications',
-      );
-    } catch (error) {
-      // Do not abort Firebase Messaging if the native helper is unavailable.
-      // firebase_messaging 16.4.3 + auto-init still has its own APNs
-      // registration path; the helper is an additional deterministic request.
-      debugPrint('Partner APNs native registration call failed: $error');
-    }
-
-    // Never request an FCM token until APNs is actually available.
-    await _waitForApnsToken(messaging);
-  }
-
-  Future<String?> _waitForApnsToken(
-    FirebaseMessaging messaging, {
-    Duration timeout = const Duration(seconds: 30),
-  }) async {
-    final deadline = DateTime.now().add(timeout);
-
-    while (DateTime.now().isBefore(deadline)) {
-      try {
-        final token = await messaging.getAPNSToken();
-        if (token != null && token.isNotEmpty) {
-          debugPrint('Partner APNs token is available.');
-          return token;
-        }
-      } catch (error) {
-        debugPrint('Partner APNs token check: $error');
-      }
-
-      await Future<void>.delayed(const Duration(seconds: 1));
-    }
-
-    debugPrint('Partner APNs token is still unavailable after 30 seconds.');
-    return null;
   }
 
   void _emitMessage(
@@ -250,20 +206,20 @@ class PushNotificationService with WidgetsBindingObserver {
   }
 
   Future<void> syncCurrentInstallation() async {
-    if (!_supportsFcm || _syncInProgress) return;
+    if (!_supportsFcm || !_initialized || _syncInProgress) return;
 
     _syncInProgress = true;
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) {
-        _scheduleRetry();
+        _scheduleTokenRetry();
         return;
       }
 
       final role = await _resolvePartnerRole(user);
       if (role == null) {
         debugPrint('Partner push sync waiting for partner role.');
-        _scheduleRetry();
+        _scheduleTokenRetry();
         return;
       }
 
@@ -277,24 +233,9 @@ class PushNotificationService with WidgetsBindingObserver {
           return;
         }
 
-        var apnsToken = await messaging.getAPNSToken();
+        final apnsToken = await _waitForApnsToken(messaging);
         if (apnsToken == null || apnsToken.isEmpty) {
-          // Re-register with APNs in case the app resumed after the permission
-          // sheet or the first registration happened before the network was ready.
-          try {
-            await _nativePushChannel.invokeMethod<bool>(
-              'registerForRemoteNotifications',
-            );
-          } catch (_) {}
-
-          apnsToken = await _waitForApnsToken(
-            messaging,
-            timeout: const Duration(seconds: 15),
-          );
-        }
-
-        if (apnsToken == null || apnsToken.isEmpty) {
-          _scheduleRetry();
+          _scheduleTokenRetry();
           return;
         }
       }
@@ -302,22 +243,25 @@ class PushNotificationService with WidgetsBindingObserver {
       final fcmToken = await messaging.getToken();
       if (fcmToken == null || fcmToken.isEmpty) {
         debugPrint('Partner push sync waiting for FCM token.');
-        _scheduleRetry();
+        _scheduleTokenRetry();
         return;
       }
 
       final installationId = await _installationId();
       final platform = _isIOS ? 'ios' : 'android';
 
-      await _saveToken(
-        role: role,
-        platform: platform,
-        token: fcmToken,
-        installationId: installationId,
+      await Supabase.instance.client.rpc(
+        'register_device_push_token',
+        params: {
+          'p_role': role,
+          'p_platform': platform,
+          'p_token': fcmToken,
+          'p_installation_id': installationId,
+        },
       );
 
-      _retryTimer?.cancel();
-      _retryTimer = null;
+      _tokenRetryTimer?.cancel();
+      _tokenRetryTimer = null;
 
       debugPrint(
         'Partner push token registered: '
@@ -326,10 +270,34 @@ class PushNotificationService with WidgetsBindingObserver {
     } catch (error, stackTrace) {
       debugPrint('Partner push token sync failed: $error');
       debugPrintStack(stackTrace: stackTrace);
-      _scheduleRetry();
+      _scheduleTokenRetry();
     } finally {
       _syncInProgress = false;
     }
+  }
+
+  Future<String?> _waitForApnsToken(
+    FirebaseMessaging messaging, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        final token = await messaging.getAPNSToken();
+        if (token != null && token.isNotEmpty) {
+          debugPrint('Partner APNs token is available.');
+          return token;
+        }
+      } catch (error) {
+        debugPrint('Partner APNs token check failed: $error');
+      }
+
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+
+    debugPrint('Partner APNs token is unavailable after 30 seconds.');
+    return null;
   }
 
   Future<String?> _resolvePartnerRole(User user) async {
@@ -356,28 +324,11 @@ class PushNotificationService with WidgetsBindingObserver {
     return null;
   }
 
-  Future<void> _saveToken({
-    required String role,
-    required String platform,
-    required String token,
-    required String installationId,
-  }) async {
-    await Supabase.instance.client.rpc(
-      'register_device_push_token',
-      params: {
-        'p_role': role,
-        'p_platform': platform,
-        'p_token': token,
-        'p_installation_id': installationId,
-      },
-    );
-  }
+  void _scheduleTokenRetry() {
+    if (_tokenRetryTimer?.isActive == true) return;
 
-  void _scheduleRetry() {
-    if (_retryTimer?.isActive == true) return;
-
-    _retryTimer = Timer(const Duration(seconds: 20), () {
-      _retryTimer = null;
+    _tokenRetryTimer = Timer(const Duration(seconds: 20), () {
+      _tokenRetryTimer = null;
       unawaited(syncCurrentInstallation());
     });
   }
@@ -411,14 +362,12 @@ class PushNotificationService with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_supportsFcm) return;
+    if (!_supportsFcm || state != AppLifecycleState.resumed) return;
 
-    if (state == AppLifecycleState.resumed) {
-      if (!_initialized) {
-        unawaited(initialize());
-      } else {
-        unawaited(syncCurrentInstallation());
-      }
+    if (!_initialized) {
+      unawaited(initialize());
+    } else {
+      unawaited(syncCurrentInstallation());
     }
   }
 
@@ -427,11 +376,15 @@ class PushNotificationService with WidgetsBindingObserver {
       WidgetsBinding.instance.removeObserver(this);
       _observerAdded = false;
     }
-    _retryTimer?.cancel();
+
+    _setupRetryTimer?.cancel();
+    _tokenRetryTimer?.cancel();
+
     await _authSubscription?.cancel();
     await _tokenSubscription?.cancel();
     await _foregroundSubscription?.cancel();
     await _openedSubscription?.cancel();
+
     await _events.close();
   }
 }
