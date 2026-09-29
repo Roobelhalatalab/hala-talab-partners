@@ -44,7 +44,7 @@ class DirectThermalPrinterService {
 
   static const MethodChannel _channel = MethodChannel('com.halatalab.partners/direct_printer');
 
-  bool get supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  bool get supported => !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
 
   Future<bool> requestBluetoothPermission() async {
     if (!supported) return false;
@@ -83,7 +83,7 @@ class DirectThermalPrinterService {
     if (!supported) {
       return const DirectPrintResult(
         success: false,
-        message: 'اختبار الاتصال المباشر متاح حاليًا على Android فقط',
+        message: 'اختبار الاتصال المباشر غير متاح على هذه المنصة',
       );
     }
     if (transport != 'network' && (deviceId == null || deviceId.trim().isEmpty)) {
@@ -114,6 +114,9 @@ class DirectThermalPrinterService {
       if (e.code == 'BLUETOOTH_PERMISSION_REQUIRED') {
         return const DirectPrintResult(success: false, message: 'اسمح للتطبيق بالوصول إلى Bluetooth ثم أعد الاختبار');
       }
+      if (e.code == 'IOS_CLASSIC_UNSUPPORTED' || e.code == 'IOS_USB_UNSUPPORTED' || e.code == 'IOS_TRANSPORT_UNSUPPORTED') {
+        return DirectPrintResult(success: false, message: e.message ?? 'طريقة الاتصال غير مدعومة على iPhone');
+      }
       if (e.code == 'USB_PERMISSION_REQUIRED') {
         return const DirectPrintResult(success: false, message: 'وافق على صلاحية USB ثم أعد الاختبار');
       }
@@ -139,7 +142,7 @@ class DirectThermalPrinterService {
     if (!supported) {
       return const DirectPrintResult(
         success: false,
-        message: 'الطباعة الحرارية المباشرة متاحة حاليًا على Android فقط. استخدم طباعة النظام على هذا الجهاز.',
+        message: 'الطباعة الحرارية المباشرة غير متاحة على هذه المنصة. استخدم طباعة النظام على هذا الجهاز.',
       );
     }
 
@@ -179,6 +182,9 @@ class DirectThermalPrinterService {
       final code = e.code;
       if (code == 'BLUETOOTH_PERMISSION_REQUIRED') {
         return const DirectPrintResult(success: false, message: 'اسمح للتطبيق بالوصول إلى أجهزة Bluetooth ثم أعد المحاولة');
+      }
+      if (code == 'IOS_CLASSIC_UNSUPPORTED' || code == 'IOS_USB_UNSUPPORTED' || code == 'IOS_TRANSPORT_UNSUPPORTED') {
+        return DirectPrintResult(success: false, message: e.message ?? 'طريقة الاتصال غير مدعومة على iPhone');
       }
       if (code == 'USB_PERMISSION_REQUIRED') {
         return const DirectPrintResult(success: false, message: 'تم طلب صلاحية طابعة USB. وافق عليها ثم أعد الطباعة');

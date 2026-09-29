@@ -26,6 +26,13 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>يستخدم هلا طلب – الشركاء موقعك لتحديد موقع المتجر ومساعدة السائق في الملاحة أثناء التوصيل.</string>
+
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>يستخدم هلا طلب – الشركاء Bluetooth للبحث عن الطابعات الحرارية القريبة والاتصال بها وطباعة الطلبات عند اختيارك الطباعة المباشرة.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>يستخدم هلا طلب – الشركاء Bluetooth للاتصال بالطابعات الحرارية المتوافقة.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>يستخدم هلا طلب – الشركاء الشبكة المحلية للاتصال بالطابعات الحرارية عبر Wi‑Fi/LAN عند إدخال عنوان الطابعة.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>يستخدم هلا طلب – الشركاء الكاميرا لالتقاط صور المتجر والمنتجات والمستندات عند اختيارك استخدام هذه الميزات.</string>
 	<key>LSRequiresIPhoneOS</key>

@@ -19,6 +19,7 @@ class ReceiptPrinterSettings {
     this.copyCount = 1,
     this.kitchenCopy = true,
     this.cashierCopy = false,
+    this.driverCopy = true,
     this.showOrderNumber = true,
     this.showCustomer = true,
     this.showItems = true,
@@ -50,6 +51,7 @@ class ReceiptPrinterSettings {
   final int copyCount;
   final bool kitchenCopy;
   final bool cashierCopy;
+  final bool driverCopy;
   final bool showOrderNumber;
   final bool showCustomer;
   final bool showItems;
@@ -90,6 +92,7 @@ class ReceiptPrinterSettings {
     int? copyCount,
     bool? kitchenCopy,
     bool? cashierCopy,
+    bool? driverCopy,
     bool? showOrderNumber,
     bool? showCustomer,
     bool? showItems,
@@ -123,6 +126,7 @@ class ReceiptPrinterSettings {
       copyCount: copyCount ?? this.copyCount,
       kitchenCopy: kitchenCopy ?? this.kitchenCopy,
       cashierCopy: cashierCopy ?? this.cashierCopy,
+      driverCopy: driverCopy ?? this.driverCopy,
       showOrderNumber: showOrderNumber ?? this.showOrderNumber,
       showCustomer: showCustomer ?? this.showCustomer,
       showItems: showItems ?? this.showItems,
@@ -156,6 +160,7 @@ class ReceiptPrinterSettings {
         'copyCount': copyCount,
         'kitchenCopy': kitchenCopy,
         'cashierCopy': cashierCopy,
+        'driverCopy': driverCopy,
         'showOrderNumber': showOrderNumber,
         'showCustomer': showCustomer,
         'showItems': showItems,
@@ -190,6 +195,7 @@ class ReceiptPrinterSettings {
       copyCount: ((json['copyCount'] as num?)?.toInt() ?? 1).clamp(1, 3),
       kitchenCopy: b('kitchenCopy', true),
       cashierCopy: b('cashierCopy', false),
+      driverCopy: b('driverCopy', true),
       showOrderNumber: b('showOrderNumber', true),
       showCustomer: b('showCustomer', true),
       showItems: b('showItems', true),
@@ -561,14 +567,19 @@ class ReceiptPrinterService {
     final templates = <String>[
       if (settings.kitchenCopy) 'kitchen',
       if (settings.cashierCopy) 'cashier',
+      // Every real order gets a dedicated driver slip in addition to the store copy.
+      // Test prints stay single-purpose and do not generate a delivery slip.
+      if (!testPrint && settings.driverCopy) 'driver',
     ];
 
     for (final template in templates) {
       for (var copy = 0; copy < copiesPerTemplate; copy++) {
-        final estimatedMm = 58 + (items.length * 13) +
-            (settings.showAddress ? 10 : 0) +
-            (settings.showNotes ? 12 : 0) +
-            (template == 'cashier' ? 18 : 8);
+        final estimatedMm = template == 'driver'
+            ? 132
+            : 58 + (items.length * 13) +
+                (settings.showAddress ? 10 : 0) +
+                (settings.showNotes ? 12 : 0) +
+                (template == 'cashier' ? 18 : 8);
 
         if (settings.usesDirectPrinter) {
           // Thermal roll: keep a readable font and let the receipt grow vertically.
@@ -673,9 +684,10 @@ class ReceiptPrinterService {
     final note = _cleanReceiptText(_firstText(order, const ['notes', 'note', 'customer_note', 'order_note']));
     final created = DateTime.tryParse(order['created_at']?.toString() ?? '')?.toLocal();
     final isKitchen = template == 'kitchen';
+    final isDriver = template == 'driver';
     final copiesPerTemplate = settings.copyCount.clamp(1, 3);
     String tr(String ar, String en, String ku) => language == 'en' ? en : (language == 'ku' ? ku : ar);
-    final showPrices = settings.showPrices && !(isKitchen && settings.hideKitchenPrices);
+    final showPrices = settings.showPrices && !isDriver && !(isKitchen && settings.hideKitchenPrices);
     final lineColor = PdfColors.grey600;
 
     pw.Widget text(String value, {double? size, bool bold = false, pw.TextAlign? align}) =>
@@ -756,9 +768,11 @@ class ReceiptPrinterService {
                 text(
                   testPrint
                       ? tr('اختبار طباعة هلا طلب', 'Hala Talab print test', 'تاقیکردنەوەی چاپی هەلا تەلەب')
-                      : (isKitchen
-                          ? tr('نسخة المطبخ', 'Kitchen copy', 'کۆپی چێشتخانە')
-                          : tr('نسخة الكاشير', 'Cashier copy', 'کۆپی کاشێر')),
+                      : (isDriver
+                          ? tr('نسخة السائق - التوصيل', 'Driver delivery copy', 'کۆپی شۆفێر - گەیاندن')
+                          : (isKitchen
+                              ? tr('نسخة المطبخ', 'Kitchen copy', 'کۆپی چێشتخانە')
+                              : tr('نسخة الكاشير', 'Cashier copy', 'کۆپی کاشێر'))),
                   size: fontSize + 2,
                   bold: false,
                 ),
@@ -779,9 +793,88 @@ class ReceiptPrinterService {
       rows.add(text('${created.year}-${created.month.toString().padLeft(2, '0')}-${created.day.toString().padLeft(2, '0')}  ${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}', align: pw.TextAlign.center));
     }
     if (settings.showCustomer) rows.add(_receiptLabelValue(tr('الزبون', 'Customer', 'کڕیار'), customer, text));
+    final customerPhone = _cleanReceiptText(_firstText(order, const [
+      'customer_phone',
+      'delivery_phone',
+      'phone',
+      'phone_number',
+    ]));
+    if (isDriver && customerPhone.isNotEmpty) {
+      rows.add(_receiptLabelValue(tr('هاتف الزبون', 'Customer phone', 'تەلەفۆنی کڕیار'), customerPhone, text));
+    }
     if (settings.showAddress && address.trim().isNotEmpty && address != '-') {
       rows.add(_receiptLabelValue(tr('العنوان', 'Address', 'ناونیشان'), address, text));
     }
+
+    if (isDriver) {
+      final locationUrl = _driverLocationUrl(order);
+      rows.add(pw.Divider(color: lineColor));
+      if (locationUrl != null) {
+        final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 30.0 : 38.0;
+        rows.add(
+          pw.Center(
+            child: pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
+              children: [
+                text(
+                  tr('موقع الزبون', 'Customer location', 'شوێنی کڕیار'),
+                  size: fontSize + 2,
+                  bold: true,
+                  align: pw.TextAlign.center,
+                ),
+                pw.SizedBox(height: 2 * PdfPageFormat.mm),
+                pw.BarcodeWidget(
+                  barcode: pw.Barcode.qrCode(),
+                  data: locationUrl,
+                  width: qrSizeMm * PdfPageFormat.mm,
+                  height: qrSizeMm * PdfPageFormat.mm,
+                  drawText: false,
+                ),
+                pw.SizedBox(height: 2 * PdfPageFormat.mm),
+                text(
+                  tr(
+                    'امسح الرمز لفتح موقع الزبون في Waze',
+                    'Scan to open the customer location in Waze',
+                    'کۆدەکە سکان بکە بۆ کردنەوەی شوێنی کڕیار لە Waze',
+                  ),
+                  size: fontSize - 0.3,
+                  bold: true,
+                  align: pw.TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        rows.add(
+          text(
+            tr(
+              'لا توجد إحداثيات موقع محفوظة لهذا الطلب',
+              'No saved customer coordinates for this order',
+              'پێگەی شوێنی کڕیار بۆ ئەم داواکارییە پاشەکەوت نەکراوە',
+            ),
+            size: fontSize,
+            bold: true,
+            align: pw.TextAlign.center,
+          ),
+        );
+      }
+      rows.add(pw.Divider(color: lineColor));
+      rows.add(
+        text(
+          tr(
+            'بعد الوصول: ارجع إلى هلا طلب - الشركاء واضغط «وصلت إلى الزبون»، وبعد التسليم اضغط «تم التسليم».',
+            'After arrival: return to Hala Talab Partners, tap “Arrived at customer”, then “Delivered”.',
+            'دوای گەیشتن: بگەڕێوە بۆ هەلا تەلەب - هاوبەشەکان و «گەیشتمە کڕیار» پاشان «گەیەنرا» دابگرە.',
+          ),
+          size: fontSize - 0.2,
+          bold: true,
+          align: pw.TextAlign.center,
+        ),
+      );
+      return rows;
+    }
+
     rows.add(pw.Divider(color: lineColor));
 
     if (settings.showItems) {
@@ -879,6 +972,38 @@ class ReceiptPrinterService {
         ],
       ),
     );
+  }
+
+  double? _orderCoordinate(Map<String, dynamic> order, List<String> keys) {
+    for (final key in keys) {
+      final raw = order[key];
+      if (raw is num) return raw.toDouble();
+      final parsed = double.tryParse(raw?.toString().trim() ?? '');
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  String? _driverLocationUrl(Map<String, dynamic> order) {
+    final latitude = _orderCoordinate(order, const [
+      'delivery_latitude',
+      'customer_latitude',
+      'latitude',
+    ]);
+    final longitude = _orderCoordinate(order, const [
+      'delivery_longitude',
+      'customer_longitude',
+      'longitude',
+    ]);
+    if (latitude == null || longitude == null) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return null;
+    }
+    return Uri.https('www.waze.com', '/ul', {
+      'll': '$latitude,$longitude',
+      'navigate': 'yes',
+      'zoom': '18',
+    }).toString();
   }
 
   String _cleanReceiptText(String value) {

@@ -48,7 +48,11 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
       ReceiptPrinterService.instance.listPrinters(),
     ]);
     if (!mounted) return;
-    final settings = results[0] as ReceiptPrinterSettings;
+    final loadedSettings = results[0] as ReceiptPrinterSettings;
+    final settings = defaultTargetPlatform == TargetPlatform.iOS &&
+            (loadedSettings.directTransport == 'bluetooth' || loadedSettings.directTransport == 'usb')
+        ? loadedSettings.copyWith(directTransport: 'auto', clearDirectDevice: true)
+        : loadedSettings;
     setState(() {
       _settings = settings;
       _customWidth.text = settings.customPaperWidthMm.toStringAsFixed(0);
@@ -57,6 +61,9 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
       _printers = List<Printer>.from(results[1] as List);
       _loading = false;
     });
+    if (settings.toJson().toString() != loadedSettings.toJson().toString()) {
+      await ReceiptPrinterService.instance.saveSettings(settings);
+    }
     if (settings.usesDirectPrinter && settings.directTransport != 'network') {
       await _refreshDirectDevices(requestPermission: false);
     }
@@ -167,7 +174,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
   Future<void> _refreshDirectDevices({bool requestPermission = true}) async {
     if (_settings.directTransport == 'network') return;
     setState(() => _directLoading = true);
-    if ((_settings.directTransport == 'bluetooth' || _settings.directTransport == 'ble') && requestPermission) {
+    if ((_settings.directTransport == 'bluetooth' || _settings.directTransport == 'ble' || _settings.directTransport == 'auto') && requestPermission) {
       await DirectThermalPrinterService.instance.requestBluetoothPermission();
     }
     final devices = await DirectThermalPrinterService.instance.listDevices(_settings.directTransport);
@@ -264,6 +271,21 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
     );
   }
 
+  String _directDevicePickerLabel() {
+    if (_settings.directTransport == 'auto') {
+      return defaultTargetPlatform == TargetPlatform.iOS
+          ? 'طابعات Bluetooth BLE القريبة'
+          : 'طابعات Bluetooth القريبة والمقترنة';
+    }
+    if (_settings.directTransport == 'bluetooth') {
+      return 'طابعات Bluetooth Classic المقترنة';
+    }
+    if (_settings.directTransport == 'ble') {
+      return 'أجهزة Bluetooth Low Energy القريبة';
+    }
+    return 'طابعات USB المتصلة';
+  }
+
   String _currentPrinterLabel() {
     if (_settings.usesDirectPrinter) {
       if (_settings.directTransport == 'network') {
@@ -350,18 +372,21 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'اختر الطابعة مرة واحدة. التطبيق يحاول الطباعة بنقرة واحدة مباشرة. إذا منع Android أو تعريف الطابعة الطباعة الصامتة (كما يحدث مع بعض Canon/Epson العامة)، ستظهر نافذة النظام للتأكيد. الطابعات الحرارية الشبكية ESC/POS عبر IP تطبع مباشرة بدون نافذة.',
+                              'اختر الطابعة مرة واحدة. التطبيق يحاول الطباعة بنقرة واحدة مباشرة. إذا منع النظام أو تعريف الطابعة الطباعة الصامتة (كما يحدث مع بعض Canon/Epson العامة)، ستظهر نافذة النظام للتأكيد. الطابعات الحرارية الشبكية ESC/POS عبر IP تطبع مباشرة بدون نافذة.',
                               style: const TextStyle(color: AppColors.muted, fontSize: 12),
                             ),
                           ] else ...[
                             DropdownButtonFormField<String>(
                               initialValue: _settings.directTransport,
                               decoration: const InputDecoration(labelText: 'نوع الاتصال المباشر'),
-                              items: const [
-                                DropdownMenuItem(value: 'bluetooth', child: Text('Bluetooth Classic حراري (SPP)')),
-                                DropdownMenuItem(value: 'ble', child: Text('Bluetooth Low Energy (BLE)')),
-                                DropdownMenuItem(value: 'usb', child: Text('USB')),
-                                DropdownMenuItem(value: 'network', child: Text('Wi‑Fi / LAN حراري مباشر (IP)')),
+                              items: [
+                                const DropdownMenuItem(value: 'auto', child: Text('Bluetooth تلقائي (أفضل توافق)')),
+                                if (defaultTargetPlatform != TargetPlatform.iOS)
+                                  const DropdownMenuItem(value: 'bluetooth', child: Text('Bluetooth Classic حراري (SPP)')),
+                                const DropdownMenuItem(value: 'ble', child: Text('Bluetooth Low Energy (BLE)')),
+                                if (defaultTargetPlatform != TargetPlatform.iOS)
+                                  const DropdownMenuItem(value: 'usb', child: Text('USB')),
+                                const DropdownMenuItem(value: 'network', child: Text('Wi‑Fi / LAN حراري مباشر (IP)')),
                               ],
                               onChanged: _settings.enabled ? (v) { if (v != null) _setDirectTransport(v); } : null,
                             ),
@@ -391,11 +416,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                     child: DropdownButtonFormField<String?>(
                                       initialValue: selectedDirectValue,
                                       decoration: InputDecoration(
-                                        labelText: _settings.directTransport == 'bluetooth'
-                                            ? 'طابعات Bluetooth Classic المقترنة'
-                                            : (_settings.directTransport == 'ble'
-                                                ? 'أجهزة Bluetooth Low Energy القريبة'
-                                                : 'طابعات USB المتصلة'),
+                                        labelText: _directDevicePickerLabel(),
                                       ),
                                       items: [
                                         const DropdownMenuItem<String?>(value: null, child: Text('اختر الطابعة')),
@@ -417,12 +438,12 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                   ),
                                 ],
                               ),
-                              if (_settings.directTransport == 'bluetooth' || _settings.directTransport == 'ble') ...[
+                              if (_settings.directTransport == 'bluetooth' || _settings.directTransport == 'ble' || _settings.directTransport == 'auto') ...[
                                 const SizedBox(height: 8),
                                 OutlinedButton.icon(
                                   onPressed: _openBluetoothSettings,
                                   icon: const Icon(Icons.bluetooth_searching_rounded),
-                                  label: Text(_settings.directTransport == 'ble'
+                                  label: Text((_settings.directTransport == 'ble' || _settings.directTransport == 'auto')
                                       ? 'فتح إعدادات Bluetooth'
                                       : 'إقران طابعة Bluetooth جديدة'),
                                 ),
@@ -430,7 +451,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                             ],
                             const SizedBox(height: 8),
                             const Text(
-                              'الاتصال المباشر يطبع ESC/POS من داخل هلا طلب بدون نافذة طباعة: Bluetooth Classic (SPP)، أو Bluetooth Low Energy (BLE)، أو USB، أو Wi‑Fi/LAN عبر IP. في BLE يبحث التطبيق عن قناة كتابة قياسية ويجرب أشهر قنوات الطابعات الحرارية تلقائيًا. الطابعات ذات البروتوكول/SDK الخاص بالشركة تبقى على خدمة طباعة النظام أو تعريف الشركة.',
+                              'الاتصال المباشر يطبع ESC/POS من داخل هلا طلب بدون نافذة طباعة. على Android يدعم Bluetooth Classic (SPP) وBLE وUSB وWi‑Fi/LAN. على iPhone يدعم BLE وWi‑Fi/LAN، بينما Bluetooth Classic العام يحتاج MFi/تعريف الشركة. خيار Bluetooth تلقائي يختار المسار المتاح، ويبحث BLE عن قناة كتابة مناسبة تلقائيًا. الطابعات ذات البروتوكول/SDK الخاص بالشركة تبقى على خدمة طباعة النظام أو تعريف الشركة.',
                               style: TextStyle(color: AppColors.muted, fontSize: 12),
                             ),
                           ],
@@ -560,6 +581,13 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                             subtitle: const Text('تتضمن الأسعار والإجمالي حسب الإعدادات.'),
                             value: _settings.cashierCopy,
                             onChanged: (v) => setState(() => _settings = _settings.copyWith(cashierCopy: v ?? false)),
+                          ),
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('نسخة السائق'),
+                            subtitle: const Text('تطبع ورقة توصيل ثانية فيها بيانات الزبون وQR لموقعه. يمكن تشغيلها أو إيقافها لكل متجر.'),
+                            value: _settings.driverCopy,
+                            onChanged: (v) => setState(() => _settings = _settings.copyWith(driverCopy: v)),
                           ),
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
