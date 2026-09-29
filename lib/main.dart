@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/hala_talab_partners_app.dart';
 import 'core/build_config.dart';
 import 'core/supabase_config.dart';
+import 'services/online_presence_service.dart';
 import 'services/push_notification_service.dart';
 
 Future<void> main() async {
@@ -47,6 +48,10 @@ Future<void> main() async {
     url: SupabaseConfig.url,
     publishableKey: SupabaseConfig.publishableKey,
   );
+
+  // Stage 214 iOS: lightweight foreground Presence for the admin online counter.
+  // This does not touch push notifications, orders, printing, or maps.
+  unawaited(OnlinePresenceService.instance.initialize());
 
   // Keep Android behavior unchanged. On iOS, request push only after the app
   // has rendered its first frame.
