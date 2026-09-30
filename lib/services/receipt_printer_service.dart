@@ -563,12 +563,13 @@ class ReceiptPrinterService {
 
     for (final template in templates) {
       for (var copy = 0; copy < copiesPerTemplate; copy++) {
-        // Compact roll estimate: keep enough headroom for wrapped Arabic/item names
-        // while avoiding the large blank tail that the previous estimate produced.
-        final estimatedMm = 72 +
-            (items.length * 8) +
-            (settings.showNotes ? 6 : 0) +
-            (testPrint ? 0 : 36);
+        // Compact thermal-roll estimate. Keep the QR fully inside the page,
+        // but avoid the large blank tail after it. The height grows with items.
+        final hasLocationQr = !testPrint && _driverLocationUrl(order) != null;
+        final estimatedMm = 94 +
+            (items.length * 7) +
+            (settings.showNotes ? 5 : 0) +
+            (hasLocationQr ? 36 : 0);
 
         if (settings.usesDirectPrinter) {
           // Thermal roll: keep a readable font and let the receipt grow vertically.
@@ -841,7 +842,7 @@ class ReceiptPrinterService {
           ],
         ),
       );
-      rows.add(pw.SizedBox(height: 0.5));
+      rows.add(pw.SizedBox(height: 0.2));
       for (final item in items) {
         final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
         final name = _cleanReceiptText(orderItemDisplayName(item));
@@ -875,7 +876,7 @@ class ReceiptPrinterService {
             rows.add(text('${tr('ملاحظة', 'Note', 'تێبینی')}: $itemNote', size: fontSize - 1, bold: true));
           }
         }
-        rows.add(pw.SizedBox(height: 1));
+        rows.add(pw.SizedBox(height: 0.4));
       }
     }
 
@@ -892,7 +893,7 @@ class ReceiptPrinterService {
       final locationUrl = _driverLocationUrl(order);
       if (locationUrl != null) {
         final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 27.0 : 32.0;
-        rows.add(pw.SizedBox(height: 0.3 * PdfPageFormat.mm));
+        rows.add(pw.SizedBox(height: 0.15 * PdfPageFormat.mm));
         rows.add(
           pw.Center(
             child: pw.BarcodeWidget(
