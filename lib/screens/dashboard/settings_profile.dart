@@ -557,7 +557,7 @@ class _StoreSettingsPageState extends State<_StoreSettingsPage> {
                   _settingsNavTile(icon: Icons.privacy_tip_outlined, title: s.t('privacyPolicy'), subtitle: s.t('securityPrivacy'), onTap: () => _openInfoPage(s.t('privacyPolicy'), s.t('privacyBody'), Icons.privacy_tip_outlined), accent: const Color(0xFF16A34A)),
                   _settingsNavTile(icon: Icons.help_outline_rounded, title: s.t('faq'), subtitle: s.t('supportHelp'), onTap: () => _openInfoPage(s.t('faq'), s.t('faqBody'), Icons.help_outline_rounded), accent: const Color(0xFFF59E0B)),
                   _settingsNavTile(icon: Icons.info_outline_rounded, title: s.t('aboutHalaTalab'), subtitle: s.t('appTitle'), onTap: () => _openInfoPage(s.t('aboutHalaTalab'), s.t('aboutHalaTalabBody'), Icons.info_outline_rounded), accent: const Color(0xFF7C3AED)),
-                  _settingsNavTile(icon: Icons.apps_rounded, title: s.t('appInformation'), subtitle: '${s.t('appVersion')} 1.0.0', onTap: () => _openInfoPage(s.t('appInformation'), '${s.t('appInfoBody')}\n\n${s.t('appVersion')}: 1.0.0', Icons.apps_rounded), accent: const Color(0xFF2563EB)),
+                  _settingsNavTile(icon: Icons.apps_rounded, title: s.t('appInformation'), subtitle: '${s.t('appVersion')} 1.0.2', onTap: () => _openInfoPage(s.t('appInformation'), '${s.t('appInfoBody')}\n\n${s.t('appVersion')}: 1.0.2', Icons.apps_rounded), accent: const Color(0xFF2563EB)),
                 ]),
               ),
               const SizedBox(height: 16),
