@@ -299,8 +299,11 @@ private final class IOSDirectPrinterPlugin: NSObject {
     context.interpolationQuality = .high
     context.setFillColor(gray: 1.0, alpha: 1.0)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    context.translateBy(x: 0, y: CGFloat(height))
-    context.scaleBy(x: 1, y: -1)
+    // Printing.raster() arrives mirrored horizontally on the iOS direct-thermal
+    // path used by this project. Flip both axes before converting to ESC/POS:
+    // Y restores CoreGraphics image orientation, X cancels the iOS mirror.
+    context.translateBy(x: CGFloat(width), y: CGFloat(height))
+    context.scaleBy(x: -1, y: -1)
     context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
 
     let bytesPerRow = (width + 7) / 8

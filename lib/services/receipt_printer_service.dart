@@ -563,10 +563,12 @@ class ReceiptPrinterService {
 
     for (final template in templates) {
       for (var copy = 0; copy < copiesPerTemplate; copy++) {
-        final estimatedMm = 86 +
-            (items.length * 11) +
-            (settings.showNotes ? 10 : 0) +
-            (testPrint ? 0 : 42);
+        // Compact roll estimate: keep enough headroom for wrapped Arabic/item names
+        // while avoiding the large blank tail that the previous estimate produced.
+        final estimatedMm = 72 +
+            (items.length * 8) +
+            (settings.showNotes ? 6 : 0) +
+            (testPrint ? 0 : 36);
 
         if (settings.usesDirectPrinter) {
           // Thermal roll: keep a readable font and let the receipt grow vertically.
@@ -575,7 +577,7 @@ class ReceiptPrinterService {
           final format = PdfPageFormat(
             widthMm * PdfPageFormat.mm,
             pageHeightMm * PdfPageFormat.mm,
-            marginAll: 2.5 * PdfPageFormat.mm,
+            marginAll: 1.5 * PdfPageFormat.mm,
           );
           document.addPage(
             pw.Page(
@@ -686,7 +688,7 @@ class ReceiptPrinterService {
         );
 
     final rows = <pw.Widget>[];
-    final headerLogoWidthMm = settings.effectivePaperWidthMm <= 58 ? 16.0 : 20.0;
+    final headerLogoWidthMm = settings.effectivePaperWidthMm <= 58 ? 15.0 : 18.0;
 
     rows.add(
       pw.Row(
@@ -713,7 +715,7 @@ class ReceiptPrinterService {
                     ),
                     child: text('HT', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
                   ),
-                pw.SizedBox(height: 0.7 * PdfPageFormat.mm),
+                pw.SizedBox(height: 0.3 * PdfPageFormat.mm),
                 text(
                   language == 'en' ? 'Hala Talab' : 'هلا طلب',
                   size: fontSize + 0.3,
@@ -723,10 +725,10 @@ class ReceiptPrinterService {
               ],
             ),
           ),
-          pw.SizedBox(width: 2 * PdfPageFormat.mm),
+          pw.SizedBox(width: 1 * PdfPageFormat.mm),
           pw.Expanded(
             child: pw.Padding(
-              padding: pw.EdgeInsets.only(left: 2 * PdfPageFormat.mm),
+              padding: pw.EdgeInsets.only(left: 1 * PdfPageFormat.mm),
               child: pw.Column(
                 mainAxisSize: pw.MainAxisSize.min,
                 children: [
@@ -747,7 +749,7 @@ class ReceiptPrinterService {
                       ),
                       child: text('S', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
                     ),
-                  pw.SizedBox(height: 0.7 * PdfPageFormat.mm),
+                  pw.SizedBox(height: 0.3 * PdfPageFormat.mm),
                   text(
                     storeName,
                     size: fontSize + 0.8,
@@ -781,7 +783,7 @@ class ReceiptPrinterService {
         ),
       );
     }
-    rows.add(pw.SizedBox(height: 0.8 * PdfPageFormat.mm));
+    rows.add(pw.SizedBox(height: 0.3 * PdfPageFormat.mm));
     rows.add(pw.Divider(color: lineColor));
 
     final dateText = created == null
@@ -839,7 +841,7 @@ class ReceiptPrinterService {
           ],
         ),
       );
-      rows.add(pw.SizedBox(height: 1));
+      rows.add(pw.SizedBox(height: 0.5));
       for (final item in items) {
         final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
         final name = _cleanReceiptText(orderItemDisplayName(item));
@@ -873,7 +875,7 @@ class ReceiptPrinterService {
             rows.add(text('${tr('ملاحظة', 'Note', 'تێبینی')}: $itemNote', size: fontSize - 1, bold: true));
           }
         }
-        rows.add(pw.SizedBox(height: 3));
+        rows.add(pw.SizedBox(height: 1));
       }
     }
 
@@ -889,8 +891,8 @@ class ReceiptPrinterService {
     if (!testPrint) {
       final locationUrl = _driverLocationUrl(order);
       if (locationUrl != null) {
-        final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 28.0 : 34.0;
-        rows.add(pw.SizedBox(height: 1 * PdfPageFormat.mm));
+        final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 27.0 : 32.0;
+        rows.add(pw.SizedBox(height: 0.3 * PdfPageFormat.mm));
         rows.add(
           pw.Center(
             child: pw.BarcodeWidget(
@@ -946,7 +948,7 @@ class ReceiptPrinterService {
     bool bold = false,
   }) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 1),
+      padding: const pw.EdgeInsets.symmetric(vertical: 0.5),
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
