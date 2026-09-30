@@ -397,11 +397,13 @@ class ReceiptPrinterService {
       String message = 'تعذرت الطباعة';
       final isIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
-      // Keep every existing Android direct-thermal path unchanged. On iPhone/iPad,
-      // use Apple's native system print sheet (AirPrint / installed printer support)
-      // for manual printing from the order screen. iOS intentionally does not use
-      // the Android ESC/POS MethodChannel transports.
-      if (settings.usesDirectPrinter && !isIOS) {
+      // Use the same direct thermal path on Android and iOS whenever the store
+      // selected a direct printer. On iOS the native MethodChannel bridge sends
+      // ESC/POS raster data straight to the configured BLE or Wi-Fi/LAN printer
+      // (for network printers this is TCP/IP, normally port 9100), so no AirPrint
+      // dialog is shown. System/AirPrint remains available only when the store
+      // explicitly uses system printing instead of a direct printer.
+      if (settings.usesDirectPrinter) {
         final direct = await DirectThermalPrinterService.instance.printPdf(
           pdfBytes: bytes,
           transport: settings.directTransport,
@@ -415,10 +417,9 @@ class ReceiptPrinterService {
         printed = direct.success;
         message = testPrint && direct.success ? 'تم إرسال صفحة الاختبار للطابعة الحرارية مباشرة' : direct.message;
       } else if (isIOS) {
-        // On iOS we deliberately require the user to press Print and choose/confirm
-        // the printer in the native print sheet. This is safer than trying to mimic
-        // Android background/silent thermal printing and works with AirPrint-capable
-        // printers and printer support exposed by iOS.
+        // System/AirPrint fallback is used only when direct thermal printing is not
+        // selected in settings. Direct Wi-Fi/LAN printing above is silent and does
+        // not open this sheet.
         if (!allowPrinterDialog) {
           printed = false;
           message = 'على iPhone وiPad استخدم زر طباعة داخل الطلب لاختيار الطابعة من نافذة iOS.';
