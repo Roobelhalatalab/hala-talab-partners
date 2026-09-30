@@ -100,6 +100,330 @@ Future<String> _currentPartnerLoginPhone() async {
   throw StateError('PARTNER_PHONE_NOT_FOUND');
 }
 
+String _partnerPinErrorText(Object error, String language) {
+  final raw = error.toString();
+  String pick(String ar, String ku, String en) => language == 'en' ? en : language == 'ku' ? ku : ar;
+  if (raw.contains('PIN_INCORRECT')) return pick('PIN الحالي غير صحيح.', 'PIN ـی ئێستا هەڵەیە.', 'Current PIN is incorrect.');
+  if (raw.contains('PIN_LOCKED')) return pick('محاولات كثيرة. انتظر قليلًا ثم حاول مرة أخرى.', 'هەوڵی زۆر دراوە. کەمێک چاوەڕێ بکە و دووبارە هەوڵ بدە.', 'Too many attempts. Wait a little and try again.');
+  if (raw.contains('PIN_NOT_SET_USE_RECOVERY')) return pick('استخدم «نسيت PIN؟» لتعيين PIN جديد بأمان.', '«PIN لەبیرم چووە؟» بەکاربهێنە بۆ دانانی PIN ـێکی نوێ.', 'Use “Forgot PIN?” to set a new PIN securely.');
+  if (raw.contains('PIN_UNCHANGED')) return pick('اختر PIN جديدًا مختلفًا عن PIN الحالي.', 'PIN ـێکی نوێ هەڵبژێرە کە لە PIN ـی ئێستا جیاواز بێت.', 'Choose a new PIN different from the current PIN.');
+  if (raw.contains('RESET_CODE_NOT_ISSUED')) return pick('الإدارة لم تصدر رمز الاسترجاع بعد.', 'بەڕێوەبەرایەتی هێشتا کۆدی گەڕاندنەوەی دەرنەکردووە.', 'The admin has not issued a recovery code yet.');
+  if (raw.contains('RESET_CODE_EXPIRED')) return pick('انتهت صلاحية رمز الاسترجاع. أرسل طلبًا جديدًا.', 'ماوەی کۆدی گەڕاندنەوە تەواو بووە. داواکارییەکی نوێ بنێرە.', 'The recovery code expired. Send a new request.');
+  if (raw.contains('RESET_CODE_INCORRECT')) return pick('رمز الاسترجاع غير صحيح.', 'کۆدی گەڕاندنەوە هەڵەیە.', 'The recovery code is incorrect.');
+  if (raw.contains('RESET_CODE_LOCKED')) return pick('تم إيقاف رمز الاسترجاع بعد محاولات كثيرة. أرسل طلبًا جديدًا.', 'کۆدی گەڕاندنەوە دوای هەوڵی زۆر داخرا. داواکارییەکی نوێ بنێرە.', 'The recovery code was locked after too many attempts. Send a new request.');
+  if (raw.contains('AUTH_REQUIRED') || raw.contains('ACCOUNT_MISMATCH')) {
+    return pick('انتهت جلسة الدخول. سجل الدخول مرة أخرى ثم حاول.', 'دانیشتنی چوونەژوورەوە کۆتایی هاتووە. دووبارە بچۆ ژوورەوە.', 'Your sign-in session expired. Sign in again and retry.');
+  }
+  return pick('تعذر إكمال العملية. حاول مرة أخرى.', 'نەتوانرا کردارەکە تەواو بکرێت. دووبارە هەوڵ بدە.', 'Could not complete the operation. Try again.');
+}
+
+Future<void> _showPartnerPinRecoveryDialog({
+  required BuildContext context,
+  required String role,
+  required String language,
+}) async {
+  String pick(String ar, String ku, String en) => language == 'en' ? en : language == 'ku' ? ku : ar;
+  final phone = await _currentPartnerLoginPhone();
+  if (!context.mounted) return;
+
+  final code = TextEditingController();
+  final newPin = TextEditingController();
+  final confirmPin = TextEditingController();
+  var requested = false;
+  var busy = false;
+  String? message;
+
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setLocal) {
+        Future<void> requestReset() async {
+          if (busy) return;
+          setLocal(() {
+            busy = true;
+            message = null;
+          });
+          try {
+            await PhonePinPartnerAuthService.requestPinReset(rawPhone: phone, role: role);
+            if (!dialogContext.mounted) return;
+            setLocal(() {
+              requested = true;
+              message = pick(
+                'وصل طلب الاسترجاع إلى لوحة الإدارة. بعد التحقق، تواصل مع الدعم أو انتظر رسالة واتساب للحصول على رمز الاسترجاع.',
+                'داواکاری گەڕاندنەوە گەیشتە پانێڵی بەڕێوەبەرایەتی. دوای پشتڕاستکردنەوە، پەیوەندی بە پشتگیری بکە یان چاوەڕێی پەیامی واتساپ بکە.',
+                'Your recovery request reached the admin panel. After verification, contact support or wait for a WhatsApp message with the recovery code.',
+              );
+            });
+          } catch (error) {
+            if (dialogContext.mounted) setLocal(() => message = _partnerPinErrorText(error, language));
+          } finally {
+            if (dialogContext.mounted) setLocal(() => busy = false);
+          }
+        }
+
+        Future<void> redeem() async {
+          if (busy) return;
+          if (!RegExp(r'^\d{6}$').hasMatch(code.text.trim())) {
+            setLocal(() => message = pick('أدخل رمز الاسترجاع من 6 أرقام.', 'کۆدی گەڕاندنەوەی 6 ژمارەیی بنووسە.', 'Enter the 6-digit recovery code.'));
+            return;
+          }
+          if (!RegExp(r'^\d{4}$').hasMatch(newPin.text.trim())) {
+            setLocal(() => message = pick('اختر PIN جديدًا من 4 أرقام.', 'PIN ـێکی نوێی 4 ژمارەیی هەڵبژێرە.', 'Choose a new 4-digit PIN.'));
+            return;
+          }
+          if (newPin.text.trim() != confirmPin.text.trim()) {
+            setLocal(() => message = pick('تأكيد PIN غير مطابق.', 'دوو PIN ـەکە یەکسان نین.', 'PIN confirmation does not match.'));
+            return;
+          }
+          setLocal(() {
+            busy = true;
+            message = null;
+          });
+          try {
+            await PhonePinPartnerAuthService.resetPinWithAdminCode(
+              rawPhone: phone,
+              role: role,
+              recoveryCode: code.text.trim(),
+              newPin: newPin.text.trim(),
+            );
+            if (!dialogContext.mounted) return;
+            Navigator.of(dialogContext).pop();
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(pick('تم تغيير PIN بنجاح.', 'PIN بە سەرکەوتوویی گۆڕدرا.', 'PIN changed successfully.'))),
+            );
+          } catch (error) {
+            if (dialogContext.mounted) setLocal(() => message = _partnerPinErrorText(error, language));
+          } finally {
+            if (dialogContext.mounted) setLocal(() => busy = false);
+          }
+        }
+
+        return AlertDialog(
+          title: Text(pick('نسيت PIN؟', 'PIN ـت لەبیر چووە؟', 'Forgot PIN?')),
+          content: SizedBox(
+            width: _adaptiveDialogWidth(context, maxWidth: 520),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(pick(
+                    'رقم الحساب: $phone',
+                    'ژمارەی هەژمار: $phone',
+                    'Account phone: $phone',
+                  ), textDirection: TextDirection.ltr),
+                  const SizedBox(height: 12),
+                  if (!requested)
+                    Text(pick(
+                      'اضغط إرسال الطلب ليصل إلى لوحة الإدارة. بعد التحقق يمكن للإدارة الاتصال بك أو إرسال رمز الاسترجاع عبر واتساب.',
+                      'داواکاری بنێرە بۆ پانێڵی بەڕێوەبەرایەتی. دوای پشتڕاستکردنەوە دەتوانن پەیوەندیت پێوە بکەن یان کۆد بە واتساپ بنێرن.',
+                      'Send a request to the admin panel. After verification, the admin can call you or send the recovery code by WhatsApp.',
+                    )),
+                  if (requested) ...[
+                    TextField(
+                      controller: code,
+                      enabled: !busy,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+                      decoration: InputDecoration(labelText: pick('رمز الاسترجاع', 'کۆدی گەڕاندنەوە', 'Recovery code')),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: newPin,
+                      enabled: !busy,
+                      obscureText: true,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                      decoration: InputDecoration(labelText: pick('PIN الجديد', 'PIN ـی نوێ', 'New PIN')),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: confirmPin,
+                      enabled: !busy,
+                      obscureText: true,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                      decoration: InputDecoration(labelText: pick('تأكيد PIN الجديد', 'پشتڕاستکردنەوەی PIN ـی نوێ', 'Confirm new PIN')),
+                    ),
+                  ],
+                  if (message != null) ...[
+                    const SizedBox(height: 12),
+                    Text(message!, style: const TextStyle(color: AppColors.muted)),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(dialogContext).pop(),
+              child: Text(pick('إلغاء', 'پاشگەزبوونەوە', 'Cancel')),
+            ),
+            if (!requested)
+              FilledButton(
+                onPressed: busy ? null : requestReset,
+                child: Text(pick('إرسال الطلب', 'ناردنی داواکاری', 'Send request')),
+              )
+            else
+              FilledButton(
+                onPressed: busy ? null : redeem,
+                child: Text(pick('تعيين PIN الجديد', 'دانانی PIN ـی نوێ', 'Set new PIN')),
+              ),
+          ],
+        );
+      },
+    ),
+  );
+
+  code.dispose();
+  newPin.dispose();
+  confirmPin.dispose();
+}
+
+Future<void> _showPartnerChangePinDialog({
+  required BuildContext context,
+  required String role,
+  required String language,
+}) async {
+  String pick(String ar, String ku, String en) => language == 'en' ? en : language == 'ku' ? ku : ar;
+  final phone = await _currentPartnerLoginPhone();
+  if (!context.mounted) return;
+
+  final currentPin = TextEditingController();
+  final newPin = TextEditingController();
+  final confirmPin = TextEditingController();
+  var busy = false;
+  String? message;
+  var openRecovery = false;
+
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setLocal) {
+        Future<void> save() async {
+          if (busy) return;
+          if (!RegExp(r'^\d{4}$').hasMatch(currentPin.text.trim())) {
+            setLocal(() => message = pick('أدخل PIN الحالي من 4 أرقام.', 'PIN ـی ئێستای 4 ژمارەیی بنووسە.', 'Enter your current 4-digit PIN.'));
+            return;
+          }
+          if (!RegExp(r'^\d{4}$').hasMatch(newPin.text.trim())) {
+            setLocal(() => message = pick('اختر PIN جديدًا من 4 أرقام.', 'PIN ـێکی نوێی 4 ژمارەیی هەڵبژێرە.', 'Choose a new 4-digit PIN.'));
+            return;
+          }
+          if (newPin.text.trim() != confirmPin.text.trim()) {
+            setLocal(() => message = pick('تأكيد PIN غير مطابق.', 'دوو PIN ـەکە یەکسان نین.', 'PIN confirmation does not match.'));
+            return;
+          }
+          if (currentPin.text.trim() == newPin.text.trim()) {
+            setLocal(() => message = pick('PIN الجديد يجب أن يختلف عن الحالي.', 'PIN ـی نوێ دەبێت لە PIN ـی ئێستا جیاواز بێت.', 'The new PIN must be different from the current PIN.'));
+            return;
+          }
+
+          setLocal(() {
+            busy = true;
+            message = null;
+          });
+          try {
+            await PhonePinPartnerAuthService.changePin(
+              rawPhone: phone,
+              role: role,
+              currentPin: currentPin.text.trim(),
+              newPin: newPin.text.trim(),
+            );
+            if (!dialogContext.mounted) return;
+            Navigator.of(dialogContext).pop();
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(pick('تم تغيير PIN بنجاح.', 'PIN بە سەرکەوتوویی گۆڕدرا.', 'PIN changed successfully.'))),
+            );
+          } catch (error) {
+            if (dialogContext.mounted) setLocal(() => message = _partnerPinErrorText(error, language));
+          } finally {
+            if (dialogContext.mounted) setLocal(() => busy = false);
+          }
+        }
+
+        return AlertDialog(
+          title: Text(pick('تغيير PIN', 'گۆڕینی PIN', 'Change PIN')),
+          content: SizedBox(
+            width: _adaptiveDialogWidth(context, maxWidth: 520),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(pick('رقم الحساب: $phone', 'ژمارەی هەژمار: $phone', 'Account phone: $phone'), textDirection: TextDirection.ltr),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: currentPin,
+                    enabled: !busy,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                    decoration: InputDecoration(labelText: pick('PIN الحالي', 'PIN ـی ئێستا', 'Current PIN')),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: newPin,
+                    enabled: !busy,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                    decoration: InputDecoration(labelText: pick('PIN الجديد', 'PIN ـی نوێ', 'New PIN')),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: confirmPin,
+                    enabled: !busy,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                    decoration: InputDecoration(labelText: pick('تأكيد PIN الجديد', 'پشتڕاستکردنەوەی PIN ـی نوێ', 'Confirm new PIN')),
+                  ),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton(
+                      onPressed: busy
+                          ? null
+                          : () {
+                              openRecovery = true;
+                              Navigator.of(dialogContext).pop();
+                            },
+                      child: Text(pick('نسيت PIN؟', 'PIN ـت لەبیر چووە؟', 'Forgot PIN?')),
+                    ),
+                  ),
+                  if (message != null) Text(message!, style: const TextStyle(color: Color(0xFFDC2626))),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(dialogContext).pop(),
+              child: Text(pick('إلغاء', 'پاشگەزبوونەوە', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: busy ? null : save,
+              child: Text(pick('حفظ PIN', 'پاشەکەوتکردنی PIN', 'Save PIN')),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+
+  currentPin.dispose();
+  newPin.dispose();
+  confirmPin.dispose();
+
+  if (openRecovery && context.mounted) {
+    await _showPartnerPinRecoveryDialog(context: context, role: role, language: language);
+  }
+}
+
 Future<bool> _confirmPartnerAccountDeletion({
   required BuildContext context,
   required String role,

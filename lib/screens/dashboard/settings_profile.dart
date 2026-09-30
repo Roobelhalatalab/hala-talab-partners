@@ -61,20 +61,6 @@ class _StoreSettingsPageState extends State<_StoreSettingsPage> {
     super.dispose();
   }
 
-  Future<void> _sendPasswordReset() async {
-    final s = AppStrings.of(context);
-    final email = Supabase.instance.client.auth.currentUser?.email ?? _email.text.trim();
-    if (email.isEmpty) return;
-    try {
-      await AuthService.instance.sendPasswordReset(email);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.t('passwordResetSent'))));
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
-    }
-  }
-
   Future<void> _contactSupport() async {
     final sent = await showDialog<bool>(
       context: context,
@@ -532,7 +518,25 @@ class _StoreSettingsPageState extends State<_StoreSettingsPage> {
                       widget.onLocaleChanged(Locale(code));
                     }
                   }, accent: const Color(0xFF2563EB)),
-                  _settingsNavTile(icon: Icons.lock_reset_rounded, title: s.t('changePassword'), subtitle: Supabase.instance.client.auth.currentUser?.email ?? _email.text, onTap: _sendPasswordReset, accent: const Color(0xFF7C3AED)),
+                  _settingsNavTile(
+                    icon: Icons.pin_outlined,
+                    title: widget.currentLocale.languageCode == 'en'
+                        ? 'Change PIN'
+                        : widget.currentLocale.languageCode == 'ku'
+                            ? 'گۆڕینی PIN'
+                            : 'تغيير PIN',
+                    subtitle: widget.currentLocale.languageCode == 'en'
+                        ? 'Change your 4-digit sign-in PIN'
+                        : widget.currentLocale.languageCode == 'ku'
+                            ? 'PIN ـی 4 ژمارەیی چوونەژوورەوە بگۆڕە'
+                            : 'تغيير رمز الدخول المكوّن من 4 أرقام',
+                    onTap: () => _showPartnerChangePinDialog(
+                      context: context,
+                      role: 'business',
+                      language: widget.currentLocale.languageCode,
+                    ),
+                    accent: const Color(0xFF7C3AED),
+                  ),
                   _settingsNavTile(icon: Icons.shield_outlined, title: s.t('securityPrivacy'), subtitle: s.t('securityPrivacy'), onTap: () => _openInfoPage(s.t('securityPrivacy'), s.t('securityBody'), Icons.shield_outlined), accent: const Color(0xFF16A34A)),
                   _settingsNavTile(
                     icon: Icons.delete_forever_outlined,

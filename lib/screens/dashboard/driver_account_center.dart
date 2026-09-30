@@ -529,6 +529,24 @@ class _DriverAccountCenterScreenState extends State<_DriverAccountCenterScreen> 
         _tile(icon: Icons.language_rounded, title: s.t('language'), subtitle: widget.currentLocale.languageCode == 'ar' ? s.t('arabic') : widget.currentLocale.languageCode == 'ku' ? s.t('kurdish') : s.t('english'), trailing: LanguageMenu(currentLocale: widget.currentLocale, onChanged: widget.onLocaleChanged)),
         _tile(icon: Icons.notifications_active_outlined, title: s.t('driverOrderNotifications'), subtitle: s.t('driverOrderNotificationsSubtitle'), trailing: Switch(value: _notificationsEnabled, onChanged: _toggleNotifications)),
         _tile(
+          icon: Icons.pin_outlined,
+          title: widget.currentLocale.languageCode == 'en'
+              ? 'Change PIN'
+              : widget.currentLocale.languageCode == 'ku'
+                  ? 'گۆڕینی PIN'
+                  : 'تغيير PIN',
+          subtitle: widget.currentLocale.languageCode == 'en'
+              ? 'Change your 4-digit sign-in PIN'
+              : widget.currentLocale.languageCode == 'ku'
+                  ? 'PIN ـی 4 ژمارەیی چوونەژوورەوە بگۆڕە'
+                  : 'تغيير رمز الدخول المكوّن من 4 أرقام',
+          onTap: () => _showPartnerChangePinDialog(
+            context: context,
+            role: 'driver',
+            language: widget.currentLocale.languageCode,
+          ),
+        ),
+        _tile(
           icon: Icons.delete_forever_outlined,
           title: widget.currentLocale.languageCode == 'en' ? 'Delete account' : widget.currentLocale.languageCode == 'ku' ? 'سڕینەوەی هەژمار' : 'حذف الحساب',
           subtitle: widget.currentLocale.languageCode == 'en' ? 'Permanently delete this driver account' : widget.currentLocale.languageCode == 'ku' ? 'هەژماری شۆفێر بە هەمیشەیی بسڕەوە' : 'حذف حساب السائق نهائيًا',
