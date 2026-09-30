@@ -385,12 +385,6 @@ class ReceiptPrinterService {
       await _setPrintState(orderId, success: false, message: result.message);
       return result;
     }
-    if (!settings.kitchenCopy && !settings.cashierCopy) {
-      const result = ReceiptPrintResult(success: false, message: 'اختر نسخة المطبخ أو الكاشير من إعدادات الطابعة');
-      await _setPrintState(orderId, success: false, message: result.message);
-      return result;
-    }
-
     try {
       final bytes = await _buildReceiptPdf(
         order: order,
@@ -540,7 +534,7 @@ class ReceiptPrinterService {
     ];
     pw.ImageProvider? storeLogo;
     final logoUrl = store?['logo_url']?.toString().trim() ?? '';
-    if (settings.printStoreLogo && logoUrl.isNotEmpty) {
+    if (logoUrl.isNotEmpty) {
       try {
         storeLogo = await networkImage(logoUrl);
       } catch (_) {
@@ -564,22 +558,14 @@ class ReceiptPrinterService {
       order['order_items'] as List? ?? const [],
     );
     final copiesPerTemplate = settings.copyCount.clamp(1, 3);
-    final templates = <String>[
-      if (settings.kitchenCopy) 'kitchen',
-      if (settings.cashierCopy) 'cashier',
-      // Every real order gets a dedicated driver slip in addition to the store copy.
-      // Test prints stay single-purpose and do not generate a delivery slip.
-      if (!testPrint && settings.driverCopy) 'driver',
-    ];
+    const templates = <String>['unified'];
 
     for (final template in templates) {
       for (var copy = 0; copy < copiesPerTemplate; copy++) {
-        final estimatedMm = template == 'driver'
-            ? 132
-            : 58 + (items.length * 13) +
-                (settings.showAddress ? 10 : 0) +
-                (settings.showNotes ? 12 : 0) +
-                (template == 'cashier' ? 18 : 8);
+        final estimatedMm = 86 +
+            (items.length * 11) +
+            (settings.showNotes ? 10 : 0) +
+            (testPrint ? 0 : 42);
 
         if (settings.usesDirectPrinter) {
           // Thermal roll: keep a readable font and let the receipt grow vertically.
@@ -679,15 +665,12 @@ class ReceiptPrinterService {
         (orderId.length >= 6 ? orderId.substring(0, 6) : orderId));
     final storeName = _cleanReceiptText(store?['name']?.toString().trim() ?? 'هلا طلب');
     final customer = _cleanReceiptText((order['customer_name'] ?? '-').toString());
-    final address = _cleanReceiptText((order['delivery_address'] ?? '-').toString());
     final total = (order['total'] as num?)?.toDouble() ?? 0;
     final note = _cleanReceiptText(_firstText(order, const ['notes', 'note', 'customer_note', 'order_note']));
     final created = DateTime.tryParse(order['created_at']?.toString() ?? '')?.toLocal();
-    final isKitchen = template == 'kitchen';
-    final isDriver = template == 'driver';
     final copiesPerTemplate = settings.copyCount.clamp(1, 3);
     String tr(String ar, String en, String ku) => language == 'en' ? en : (language == 'ku' ? ku : ar);
-    final showPrices = settings.showPrices && !isDriver && !(isKitchen && settings.hideKitchenPrices);
+    final showPrices = settings.showPrices;
     final lineColor = PdfColors.grey600;
 
     pw.Widget text(String value, {double? size, bool bold = false, pw.TextAlign? align}) =>
@@ -706,178 +689,156 @@ class ReceiptPrinterService {
 
     rows.add(
       pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Column(
-            mainAxisSize: pw.MainAxisSize.min,
-            children: [
-              if (halaReceiptLogo != null)
-                pw.Container(
-                  width: headerLogoWidthMm * PdfPageFormat.mm,
-                  height: headerLogoWidthMm * PdfPageFormat.mm,
-                  child: pw.Image(halaReceiptLogo, fit: pw.BoxFit.contain),
-                )
-              else
-                pw.Container(
-                  width: headerLogoWidthMm * PdfPageFormat.mm,
-                  height: headerLogoWidthMm * PdfPageFormat.mm,
-                  alignment: pw.Alignment.center,
-                  decoration: pw.BoxDecoration(
-                    border: pw.Border.all(color: PdfColors.black, width: 1),
-                    shape: pw.BoxShape.circle,
-                  ),
-                  child: text('HT', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
-                ),
-              pw.SizedBox(height: 1.2 * PdfPageFormat.mm),
-              text(language == 'en' ? 'Hala Talab' : 'هلا طلب', size: fontSize + 0.3, bold: true, align: pw.TextAlign.center),
-            ],
-          ),
-          pw.SizedBox(width: 2.5 * PdfPageFormat.mm),
-          pw.Container(width: 0.5 * PdfPageFormat.mm, height: 18 * PdfPageFormat.mm, color: lineColor),
-          pw.SizedBox(width: 2.5 * PdfPageFormat.mm),
           pw.Expanded(
             child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
               mainAxisSize: pw.MainAxisSize.min,
               children: [
-                if (storeLogo != null)
-                  pw.Row(
-                    children: [
-                      pw.Container(
-                        width: 8 * PdfPageFormat.mm,
-                        height: 8 * PdfPageFormat.mm,
-                        child: pw.Image(storeLogo, fit: pw.BoxFit.contain),
-                      ),
-                      pw.SizedBox(width: 2 * PdfPageFormat.mm),
-                      pw.Expanded(
-                        child: text(
-                          settings.printStoreName ? storeName : (language == 'en' ? 'Store' : 'المتجر'),
-                          size: fontSize + 3,
-                          bold: true,
-                        ),
-                      ),
-                    ],
+                if (halaReceiptLogo != null)
+                  pw.Container(
+                    width: headerLogoWidthMm * PdfPageFormat.mm,
+                    height: headerLogoWidthMm * PdfPageFormat.mm,
+                    child: pw.Image(halaReceiptLogo, fit: pw.BoxFit.contain),
                   )
                 else
-                  text(
-                    settings.printStoreName ? storeName : (language == 'en' ? 'Store' : 'المتجر'),
-                    size: fontSize + 3,
-                    bold: true,
+                  pw.Container(
+                    width: headerLogoWidthMm * PdfPageFormat.mm,
+                    height: headerLogoWidthMm * PdfPageFormat.mm,
+                    alignment: pw.Alignment.center,
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.black, width: 1),
+                      shape: pw.BoxShape.circle,
+                    ),
+                    child: text('HT', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
                   ),
-                pw.SizedBox(height: 1.1 * PdfPageFormat.mm),
+                pw.SizedBox(height: 0.7 * PdfPageFormat.mm),
                 text(
-                  testPrint
-                      ? tr('اختبار طباعة هلا طلب', 'Hala Talab print test', 'تاقیکردنەوەی چاپی هەلا تەلەب')
-                      : (isDriver
-                          ? tr('نسخة السائق - التوصيل', 'Driver delivery copy', 'کۆپی شۆفێر - گەیاندن')
-                          : (isKitchen
-                              ? tr('نسخة المطبخ', 'Kitchen copy', 'کۆپی چێشتخانە')
-                              : tr('نسخة الكاشير', 'Cashier copy', 'کۆپی کاشێر'))),
-                  size: fontSize + 2,
-                  bold: false,
+                  language == 'en' ? 'Hala Talab' : 'هلا طلب',
+                  size: fontSize + 0.3,
+                  bold: true,
+                  align: pw.TextAlign.center,
                 ),
-                if (copiesPerTemplate > 1)
-                  text('${tr('نسخة', 'Copy', 'کۆپی')} $copyIndex', size: fontSize - 0.2),
               ],
+            ),
+          ),
+          pw.SizedBox(width: 2 * PdfPageFormat.mm),
+          pw.Expanded(
+            child: pw.Padding(
+              padding: pw.EdgeInsets.only(left: 2 * PdfPageFormat.mm),
+              child: pw.Column(
+                mainAxisSize: pw.MainAxisSize.min,
+                children: [
+                  if (storeLogo != null)
+                    pw.Container(
+                      width: headerLogoWidthMm * PdfPageFormat.mm,
+                      height: headerLogoWidthMm * PdfPageFormat.mm,
+                      child: pw.Image(storeLogo, fit: pw.BoxFit.contain),
+                    )
+                  else
+                    pw.Container(
+                      width: headerLogoWidthMm * PdfPageFormat.mm,
+                      height: headerLogoWidthMm * PdfPageFormat.mm,
+                      alignment: pw.Alignment.center,
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(color: PdfColors.black, width: 1),
+                        shape: pw.BoxShape.circle,
+                      ),
+                      child: text('S', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
+                    ),
+                  pw.SizedBox(height: 0.7 * PdfPageFormat.mm),
+                  text(
+                    storeName,
+                    size: fontSize + 0.8,
+                    bold: true,
+                    align: pw.TextAlign.center,
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
-    rows.add(pw.SizedBox(height: 2 * PdfPageFormat.mm));
+    if (testPrint) {
+      rows.add(pw.SizedBox(height: 1.2 * PdfPageFormat.mm));
+      rows.add(
+        text(
+          tr('اختبار طباعة هلا طلب', 'Hala Talab print test', 'تاقیکردنەوەی چاپی هەلا تەلەب'),
+          size: fontSize + 1,
+          bold: true,
+          align: pw.TextAlign.center,
+        ),
+      );
+    }
+    if (copiesPerTemplate > 1) {
+      rows.add(
+        text(
+          '${tr('نسخة', 'Copy', 'کۆپی')} $copyIndex',
+          size: fontSize - 0.2,
+          align: pw.TextAlign.center,
+        ),
+      );
+    }
+    rows.add(pw.SizedBox(height: 0.8 * PdfPageFormat.mm));
     rows.add(pw.Divider(color: lineColor));
-    if (settings.showOrderNumber) {
-      rows.add(text('${tr('رقم الطلب', 'Order', 'ژمارەی داواکاری')} $number', size: fontSize + 3, bold: true, align: pw.TextAlign.center));
+
+    final dateText = created == null
+        ? ''
+        : '${created.year}-${created.month.toString().padLeft(2, '0')}-${created.day.toString().padLeft(2, '0')}';
+    final timeText = created == null
+        ? ''
+        : '${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}';
+    if (settings.showOrderNumber || created != null) {
+      rows.add(
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            if (settings.showOrderNumber)
+              text('${tr('طلب', 'Order', 'داواکاری')} #$number', size: fontSize + 1.8, bold: true),
+            if (created != null)
+              text('$timeText  $dateText', size: fontSize, bold: true),
+          ],
+        ),
+      );
     }
-    if (created != null) {
-      rows.add(text('${created.year}-${created.month.toString().padLeft(2, '0')}-${created.day.toString().padLeft(2, '0')}  ${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}', align: pw.TextAlign.center));
+
+    if (settings.showCustomer) {
+      rows.add(_receiptLabelValue(tr('الزبون', 'Customer', 'کڕیار'), customer, text));
     }
-    if (settings.showCustomer) rows.add(_receiptLabelValue(tr('الزبون', 'Customer', 'کڕیار'), customer, text));
     final customerPhone = _cleanReceiptText(_firstText(order, const [
       'customer_phone',
       'delivery_phone',
       'phone',
       'phone_number',
     ]));
-    if (isDriver && customerPhone.isNotEmpty) {
-      rows.add(_receiptLabelValue(tr('هاتف الزبون', 'Customer phone', 'تەلەفۆنی کڕیار'), customerPhone, text));
+    if (customerPhone.isNotEmpty) {
+      rows.add(_receiptLabelValue(tr('الهاتف', 'Phone', 'تەلەفۆن'), customerPhone, text));
     }
-    if (settings.showAddress && address.trim().isNotEmpty && address != '-') {
-      rows.add(_receiptLabelValue(tr('العنوان', 'Address', 'ناونیشان'), address, text));
-    }
-
-    if (isDriver) {
-      final locationUrl = _driverLocationUrl(order);
-      rows.add(pw.Divider(color: lineColor));
-      if (locationUrl != null) {
-        final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 30.0 : 38.0;
-        rows.add(
-          pw.Center(
-            child: pw.Column(
-              mainAxisSize: pw.MainAxisSize.min,
-              children: [
-                text(
-                  tr('موقع الزبون', 'Customer location', 'شوێنی کڕیار'),
-                  size: fontSize + 2,
-                  bold: true,
-                  align: pw.TextAlign.center,
-                ),
-                pw.SizedBox(height: 2 * PdfPageFormat.mm),
-                pw.BarcodeWidget(
-                  barcode: pw.Barcode.qrCode(),
-                  data: locationUrl,
-                  width: qrSizeMm * PdfPageFormat.mm,
-                  height: qrSizeMm * PdfPageFormat.mm,
-                  drawText: false,
-                ),
-                pw.SizedBox(height: 2 * PdfPageFormat.mm),
-                text(
-                  tr(
-                    'امسح الرمز لفتح موقع الزبون في Waze',
-                    'Scan to open the customer location in Waze',
-                    'کۆدەکە سکان بکە بۆ کردنەوەی شوێنی کڕیار لە Waze',
-                  ),
-                  size: fontSize - 0.3,
-                  bold: true,
-                  align: pw.TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        );
-      } else {
-        rows.add(
-          text(
-            tr(
-              'لا توجد إحداثيات موقع محفوظة لهذا الطلب',
-              'No saved customer coordinates for this order',
-              'پێگەی شوێنی کڕیار بۆ ئەم داواکارییە پاشەکەوت نەکراوە',
-            ),
-            size: fontSize,
-            bold: true,
-            align: pw.TextAlign.center,
-          ),
-        );
-      }
-      rows.add(pw.Divider(color: lineColor));
+    if (settings.showAddress) {
       rows.add(
-        text(
-          tr(
-            'بعد الوصول: ارجع إلى هلا طلب - الشركاء واضغط «وصلت إلى الزبون»، وبعد التسليم اضغط «تم التسليم».',
-            'After arrival: return to Hala Talab Partners, tap “Arrived at customer”, then “Delivered”.',
-            'دوای گەیشتن: بگەڕێوە بۆ هەلا تەلەب - هاوبەشەکان و «گەیشتمە کڕیار» پاشان «گەیەنرا» دابگرە.',
-          ),
-          size: fontSize - 0.2,
-          bold: true,
-          align: pw.TextAlign.center,
+        _receiptLabelValue(
+          tr('العنوان', 'Address', 'ناونیشان'),
+          tr('امسح QR لعرض الموقع', 'Scan QR to view location', 'QR سکان بکە بۆ بینینی شوێن'),
+          text,
         ),
       );
-      return rows;
     }
 
     rows.add(pw.Divider(color: lineColor));
 
     if (settings.showItems) {
+      rows.add(
+        pw.Row(
+          children: [
+            pw.SizedBox(width: 10 * PdfPageFormat.mm, child: text(tr('الكمية', 'Qty', 'ژمارە'), bold: true)),
+            pw.Expanded(child: text(tr('الصنف', 'Item', 'بابەت'), bold: true)),
+            if (showPrices)
+              pw.SizedBox(width: 25 * PdfPageFormat.mm, child: text(tr('السعر', 'Price', 'نرخ'), bold: true, align: pw.TextAlign.left)),
+          ],
+        ),
+      );
+      rows.add(pw.SizedBox(height: 1));
       for (final item in items) {
         final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
         final name = _cleanReceiptText(orderItemDisplayName(item));
@@ -886,10 +847,13 @@ class ReceiptPrinterService {
           pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // Keep the line simple and glyph-safe: quantity + product name,
-              // without x/× separators that some printer fonts render as squares.
-              pw.Expanded(child: text('$quantity  $name', size: fontSize + 1, bold: true)),
-              if (showPrices) text('${(price * quantity).toStringAsFixed(0)} د.ع', bold: true),
+              pw.SizedBox(width: 10 * PdfPageFormat.mm, child: text('$quantity', size: fontSize + 0.5, bold: true)),
+              pw.Expanded(child: text(name, size: fontSize + 0.5, bold: true)),
+              if (showPrices)
+                pw.SizedBox(
+                  width: 25 * PdfPageFormat.mm,
+                  child: text('${(price * quantity).toStringAsFixed(0)} د.ع', bold: true, align: pw.TextAlign.left),
+                ),
             ],
           ),
         );
@@ -897,7 +861,7 @@ class ReceiptPrinterService {
           final extras = _cleanReceiptText(_itemExtras(item));
           if (extras.isNotEmpty) {
             rows.add(pw.Padding(
-              padding: const pw.EdgeInsets.only(top: 2, bottom: 2),
+              padding: const pw.EdgeInsets.only(top: 1, bottom: 1),
               child: text('${tr('الإضافات', 'Extras', 'زیادکراوەکان')}: $extras', size: fontSize - 1),
             ));
           }
@@ -908,7 +872,7 @@ class ReceiptPrinterService {
             rows.add(text('${tr('ملاحظة', 'Note', 'تێبینی')}: $itemNote', size: fontSize - 1, bold: true));
           }
         }
-        rows.add(pw.SizedBox(height: 5));
+        rows.add(pw.SizedBox(height: 3));
       }
     }
 
@@ -916,9 +880,28 @@ class ReceiptPrinterService {
       rows.add(pw.Divider(color: lineColor));
       rows.add(text('${tr('ملاحظة الطلب', 'Order note', 'تێبینی داواکاری')}: $note', size: fontSize + 1, bold: true));
     }
-    if (!isKitchen && showPrices) {
+    if (showPrices) {
       rows.add(pw.Divider(color: lineColor));
-      rows.add(_receiptLabelValue(tr('الإجمالي', 'Total', 'کۆی گشتی'), '${total.toStringAsFixed(0)} د.ع', text, bold: true));
+      rows.add(_receiptLabelValue(tr('المجموع', 'Total', 'کۆی گشتی'), '${total.toStringAsFixed(0)} د.ع', text, bold: true));
+    }
+
+    if (!testPrint) {
+      final locationUrl = _driverLocationUrl(order);
+      if (locationUrl != null) {
+        final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 28.0 : 34.0;
+        rows.add(pw.SizedBox(height: 1 * PdfPageFormat.mm));
+        rows.add(
+          pw.Center(
+            child: pw.BarcodeWidget(
+              barcode: pw.Barcode.qrCode(),
+              data: locationUrl,
+              width: qrSizeMm * PdfPageFormat.mm,
+              height: qrSizeMm * PdfPageFormat.mm,
+              drawText: false,
+            ),
+          ),
+        );
+      }
     }
 
     return rows;
@@ -962,7 +945,7 @@ class ReceiptPrinterService {
     bool bold = false,
   }) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      padding: const pw.EdgeInsets.symmetric(vertical: 1),
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
@@ -999,10 +982,9 @@ class ReceiptPrinterService {
     if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
       return null;
     }
-    return Uri.https('www.waze.com', '/ul', {
+    return Uri.https('waze.com', '/ul', {
       'll': '$latitude,$longitude',
       'navigate': 'yes',
-      'zoom': '18',
     }).toString();
   }
 

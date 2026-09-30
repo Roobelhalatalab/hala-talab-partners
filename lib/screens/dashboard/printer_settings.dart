@@ -546,7 +546,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                           const SizedBox(height: 10),
                           DropdownButtonFormField<int>(
                             initialValue: _settings.copyCount,
-                            decoration: const InputDecoration(labelText: 'عدد النسخ لكل نوع'),
+                            decoration: const InputDecoration(labelText: 'عدد النسخ المطبوعة'),
                             items: const [
                               DropdownMenuItem(value: 1, child: Text('نسخة واحدة')),
                               DropdownMenuItem(value: 2, child: Text('نسختان')),
@@ -567,33 +567,12 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                           ),
                         ]),
                         const SizedBox(height: 14),
-                        _section('نسخ المطبخ والكاشير', [
-                          CheckboxListTile(
+                        _section('النسخة الموحدة', [
+                          const ListTile(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('نسخة المطبخ'),
-                            subtitle: const Text('تركّز على الأصناف والإضافات والملاحظات.'),
-                            value: _settings.kitchenCopy,
-                            onChanged: (v) => setState(() => _settings = _settings.copyWith(kitchenCopy: v ?? false)),
-                          ),
-                          CheckboxListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('نسخة الكاشير'),
-                            subtitle: const Text('تتضمن الأسعار والإجمالي حسب الإعدادات.'),
-                            value: _settings.cashierCopy,
-                            onChanged: (v) => setState(() => _settings = _settings.copyWith(cashierCopy: v ?? false)),
-                          ),
-                          SwitchListTile.adaptive(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('نسخة السائق'),
-                            subtitle: const Text('تطبع ورقة توصيل ثانية فيها بيانات الزبون وQR لموقعه. يمكن تشغيلها أو إيقافها لكل متجر.'),
-                            value: _settings.driverCopy,
-                            onChanged: (v) => setState(() => _settings = _settings.copyWith(driverCopy: v)),
-                          ),
-                          SwitchListTile.adaptive(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('إخفاء الأسعار من نسخة المطبخ'),
-                            value: _settings.hideKitchenPrices,
-                            onChanged: (v) => setState(() => _settings = _settings.copyWith(hideKitchenPrices: v)),
+                            leading: Icon(Icons.receipt_long_outlined),
+                            title: Text('ورقة واحدة للمتجر والسائق'),
+                            subtitle: Text('تتضمن بيانات الزبون، تفاصيل الأصناف والأسعار والمجموع، ويظهر QR الموقع في نهاية الورقة.'),
                           ),
                         ]),
                         const SizedBox(height: 14),
@@ -605,8 +584,6 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                           _printOption('الملاحظات', _settings.showNotes, (v) => _settings = _settings.copyWith(showNotes: v)),
                           _printOption('الأسعار', _settings.showPrices, (v) => _settings = _settings.copyWith(showPrices: v)),
                           _printOption('العنوان', _settings.showAddress, (v) => _settings = _settings.copyWith(showAddress: v)),
-                          _printOption('اسم المتجر أعلى الورقة', _settings.printStoreName, (v) => _settings = _settings.copyWith(printStoreName: v)),
-                          _printOption('شعار المتجر (عند توفره)', _settings.printStoreLogo, (v) => _settings = _settings.copyWith(printStoreLogo: v)),
                         ]),
                         const SizedBox(height: 14),
                         _section('الأتمتة وميزات الطابعة', [
