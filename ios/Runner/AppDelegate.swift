@@ -43,7 +43,10 @@ import Network
 
     // iOS direct thermal printer bridge. This is intentionally registered
     // beside the existing plugins and does not alter Firebase/APNs handling.
-    let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "HalaTalabDirectPrinterIOS")
+    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "HalaTalabDirectPrinterIOS") else {
+      print("Hala Talab Partners direct printer registrar unavailable")
+      return
+    }
     let plugin = IOSDirectPrinterPlugin(messenger: registrar.messenger())
     directPrinterPlugin = plugin
   }
