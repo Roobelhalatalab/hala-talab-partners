@@ -56,6 +56,24 @@ class StoreOperationsRepository {
     throw PostgrestException(message: 'Store operation settings were not returned');
   }
 
+  Future<Map<String, dynamic>> saveMerchantDeliveryPreferences({
+    required bool selfDelivery,
+    required bool alwaysOpen,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw const AuthException('User is not signed in');
+    final store = await getCurrentStore();
+    final storeId = store?['id']?.toString();
+    if (storeId == null || storeId.isEmpty) throw const AuthException('Store is not configured');
+    return _client
+        .from('stores')
+        .update({'self_delivery': selfDelivery, 'always_open': alwaysOpen})
+        .eq('id', storeId)
+        .eq('owner_id', userId)
+        .select()
+        .single();
+  }
+
   Future<List<Map<String, dynamic>>> getStoreShifts() async {
     final store = await getCurrentStore();
     final storeId = store?['id']?.toString();

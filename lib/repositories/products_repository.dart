@@ -157,6 +157,8 @@ class ProductsRepository {
     String? sizeLabel,
     double? weightValue,
     String weightUnit = 'g',
+    double minQuantity = 1,
+    double quantityStep = 1,
     String catalogKind = 'restaurant',
   }) async {
     final storeId = await _requireStoreId();
@@ -168,6 +170,9 @@ class ProductsRepository {
     }
     if (calories != null && calories < 0) {
       throw ArgumentError('Calories cannot be negative');
+    }
+    if (minQuantity <= 0 || quantityStep <= 0) {
+      throw ArgumentError('Minimum quantity and quantity step must be greater than zero');
     }
     if (weightValue != null && weightValue < 0) {
       throw ArgumentError('Weight cannot be negative');
@@ -202,6 +207,8 @@ class ProductsRepository {
       'size_label': (sizeLabel ?? '').trim().isEmpty ? null : sizeLabel!.trim(),
       'weight_value': weightValue,
       'weight_unit': weightUnit,
+      'min_quantity': minQuantity,
+      'quantity_step': quantityStep,
       'catalog_kind': catalogKind,
       // Stage 155: ordering is applied atomically by the reorder RPC after the
       // product record is saved. Keeping this null during create/edit also
@@ -290,7 +297,7 @@ class ProductsRepository {
   }) async {
     final storeId = await _requireStoreId();
     await _client.rpc(
-      'store_replace_product_variants_v2',
+      'store_replace_product_variants_v3',
       params: {
         'p_store_id': storeId,
         'p_product_id': productId,
@@ -331,6 +338,8 @@ class ProductsRepository {
       sizeLabel: source['size_label']?.toString(),
       weightValue: (source['weight_value'] as num?)?.toDouble(),
       weightUnit: source['weight_unit']?.toString() ?? 'g',
+      minQuantity: (source['min_quantity'] as num?)?.toDouble() ?? 1,
+      quantityStep: (source['quantity_step'] as num?)?.toDouble() ?? 1,
       catalogKind: source['catalog_kind']?.toString() ?? 'restaurant',
     );
     final newId = created['id'].toString();
@@ -347,6 +356,15 @@ class ProductsRepository {
           'price': ((entry.value['price'] as num?) ?? 0).toDouble(),
           'sort_order': entry.key + 1,
           'is_available': entry.value['is_available'] != false,
+          'image_url': entry.value['image_url']?.toString(),
+          'image_path': entry.value['image_path']?.toString(),
+          'packages': entry.value['packages'] is List
+              ? List<Map<String, dynamic>>.from(
+                  (entry.value['packages'] as List).map(
+                    (e) => Map<String, dynamic>.from(e as Map),
+                  ),
+                )
+              : const <Map<String, dynamic>>[],
         }).toList(),
       );
     }

@@ -9,7 +9,6 @@ String _p55(BuildContext context, String ar, String ku, String en) {
 
 
 bool _isFoodCatalog(String businessType) => const {'restaurant', 'cafe', 'sweets'}.contains(businessType);
-bool _supportsWeightPresets(String businessType) => const {'grocery', 'sweets'}.contains(businessType);
 bool _isDrinkCatalog(String businessType) => businessType == 'beverages';
 bool _usesInventory(String businessType) => const {'grocery', 'pharmacy', 'beverages', 'flowers', 'hookah'}.contains(businessType);
 
@@ -769,11 +768,14 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
   String get businessType => widget.businessType;
 
   final _formKey=GlobalKey<FormState>();
-  late final TextEditingController _name,_description,_price,_category,_position,_prep,_calories,_notes,_tags,_brand,_barcode,_sku,_stock,_sizeLabel,_weightValue;
+  late final TextEditingController _name,_description,_price,_category,_position,_prep,_calories,_notes,_tags,_brand,_barcode,_sku,_stock,_sizeLabel,_weightValue,_minQuantity,_quantityStep;
   late bool _available; bool _saving=false,_loadingAddons=true; PlatformFile? _selectedImage; String? _imageUrl,_imagePath; bool _removeImage=false; String? _saveError;
   List<Map<String,dynamic>> _addons=const[], _categories=const[]; final Set<String> _selectedAddonIds={}; String _type='single'; String _unit='piece'; String _weightUnit='g'; bool _trackStock=false;
+  static const String _packagesOnlyVariantName = '__hala_packages_only__';
   final List<_ProductVariantDraft> _variants = <_ProductVariantDraft>[];
+  final List<_ProductPackageDraft> _standalonePackages = <_ProductPackageDraft>[];
   bool _useVariants = false;
+  bool _usePackagesOnly = false;
   int _shiftMode = 1;
   List<Map<String, dynamic>> _shifts = const [];
   final Set<String> _selectedShiftIds = <String>{};
@@ -800,6 +802,8 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     _stock=TextEditingController(text:p?['stock_quantity']?.toString()??'');
     _sizeLabel=TextEditingController(text:p?['size_label']?.toString()??'');
     _weightValue=TextEditingController(text:p?['weight_value']?.toString()??'');
+    _minQuantity=TextEditingController(text:((p?['min_quantity'] as num?)?.toDouble() ?? 1).toString());
+    _quantityStep=TextEditingController(text:((p?['quantity_step'] as num?)?.toDouble() ?? 1).toString());
     _available=p?['is_available']!=false;
     _type=p?['product_type']?.toString()??(_isDrinkCatalog(businessType)?'drink':(_isFoodCatalog(businessType)?'single':'product'));
     _unit=p?['unit']?.toString()??'piece';
@@ -807,7 +811,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     _trackStock=p?['track_stock']==true;
     _imageUrl=p?['image_url']?.toString(); _imagePath=p?['image_path']?.toString(); _loadCatalogMeta();
   }
-  @override void dispose(){for(final c in [_name,_description,_price,_category,_position,_prep,_calories,_notes,_tags,_brand,_barcode,_sku,_stock,_sizeLabel,_weightValue]){c.dispose();}for(final v in _variants){v.dispose();}super.dispose();}
+  @override void dispose(){for(final c in [_name,_description,_price,_category,_position,_prep,_calories,_notes,_tags,_brand,_barcode,_sku,_stock,_sizeLabel,_weightValue,_minQuantity,_quantityStep]){c.dispose();}for(final v in _variants){v.dispose();}for(final p in _standalonePackages){p.dispose();}super.dispose();}
 
   Future<void> _loadCatalogMeta() async {
     try {
@@ -857,14 +861,29 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
               ? ((_dialogShiftId ?? '').isNotEmpty ? {_dialogShiftId!} : shifts.map((e) => e['id'].toString()))
               : assignedShiftIds);
         for(final old in _variants){old.dispose();}
-        _variants
-          ..clear()
-          ..addAll(variants.map((v)=>_ProductVariantDraft(
+        for(final old in _standalonePackages){old.dispose();}
+        _variants.clear();
+        _standalonePackages.clear();
+        final packagesOnly = variants.length == 1 && variants.first['name']?.toString() == _packagesOnlyVariantName;
+        if(packagesOnly){
+          final raw = variants.first['packages'];
+          if(raw is List){
+            _standalonePackages.addAll(raw.map((p)=>_ProductPackageDraft.fromMap(Map<String,dynamic>.from(p as Map))));
+          }
+          _usePackagesOnly=true;
+          _useVariants=false;
+        }else{
+          _variants.addAll(variants.map((v)=>_ProductVariantDraft(
             name:v['name']?.toString()??'',
             price:((v['price'] as num?)??0).toDouble(),
             available:v['is_available']!=false,
+            imageUrl:v['image_url']?.toString(),
+            imagePath:v['image_path']?.toString(),
+            packages: v['packages'] is List ? List<Map<String,dynamic>>.from(v['packages'] as List) : const <Map<String,dynamic>>[],
           )));
-        _useVariants=_variants.isNotEmpty;
+          _useVariants=_variants.isNotEmpty;
+          _usePackagesOnly=false;
+        }
         _loadingAddons=false;
       });
       }
@@ -872,18 +891,114 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
   }
 
   void _addVariant(){setState(()=>_variants.add(_ProductVariantDraft()));}
-  void _removeVariant(int index){if(index<0||index>=_variants.length)return;final item=_variants.removeAt(index);item.dispose();setState((){});}
+
+  Future<void> _removeVariant(int index) async {
+    if(index<0||index>=_variants.length)return;
+    final v=_variants[index];
+    final hasData=v.name.text.trim().isNotEmpty ||
+        v.price.text.trim().isNotEmpty ||
+        v.selectedImage!=null ||
+        (v.imageUrl??'').isNotEmpty ||
+        v.packages.isNotEmpty;
+    if(hasData){
+      final ok=await showDialog<bool>(
+        context:context,
+        builder:(context)=>AlertDialog(
+          title:Text(_p55(context,'حذف النوع؟','سڕینەوەی جۆر؟','Delete type?')),
+          content:Text(_p55(context,'سيتم حذف هذا النوع وعبواته من النموذج. لن يتأثر أي منتج آخر.','ئەم جۆرە و پاکەتەکانی لە فۆڕمەکە دەسڕدرێنەوە.','This type and its packages will be removed from the form. Other products are not affected.')),
+          actions:[
+            TextButton(onPressed:()=>Navigator.pop(context,false),child:Text(_p55(context,'إلغاء','هەڵوەشاندنەوە','Cancel'))),
+            FilledButton(onPressed:()=>Navigator.pop(context,true),child:Text(_p55(context,'حذف','سڕینەوە','Delete'))),
+          ],
+        ),
+      );
+      if(ok!=true||!mounted)return;
+    }
+    final item=_variants.removeAt(index);
+    item.dispose();
+    setState((){});
+  }
+
   void _moveVariant(int from,int to){if(from<0||from>=_variants.length||to<0||to>=_variants.length)return;setState((){final item=_variants.removeAt(from);_variants.insert(to,item);});}
 
+  Future<void> _pickVariantImage(_ProductVariantDraft variant) async {
+    final f=await pickPartnerPhotoFromGallery();
+    if(f==null)return;
+    if(f.size>5*1024*1024||f.bytes==null){
+      if(mounted){
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(_p55(context,'الصورة يجب أن تكون أقل من 5MB','وێنەکە دەبێت کەمتر لە 5MB بێت','Image must be under 5MB'))));
+      }
+      return;
+    }
+    if(!mounted)return;
+    final cropped=await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(
+        builder:(_)=>PartnerImageCropEditor(
+          bytes:f.bytes!,
+          aspectRatio:4/3,
+          preserveWholeImage:true,
+          title:_p55(context,'ضبط صورة النوع','ڕێکخستنی وێنەی جۆر','Adjust type image'),
+        ),
+      ),
+    );
+    if(!mounted||cropped==null)return;
+    setState((){
+      variant.selectedImage=PlatformFile(
+        name:'variant_${DateTime.now().millisecondsSinceEpoch}.png',
+        size:cropped.length,
+        bytes:cropped,
+      );
+      variant.removeImage=false;
+    });
+  }
+  void _addStandalonePackage(){setState(()=>_standalonePackages.add(_ProductPackageDraft()));}
+  void _removeStandalonePackage(int index){if(index<0||index>=_standalonePackages.length)return;final item=_standalonePackages.removeAt(index);item.dispose();setState((){});}
+
+  String? _validatePackageList(List<_ProductPackageDraft> packages){
+    if(packages.isEmpty)return _p55(context,'أضف عبوة أو وزنًا واحدًا على الأقل','لانیکەم پاکەتێک زیاد بکە','Add at least one package or weight');
+    var defaults=0;
+    for(final pkg in packages){
+      final original=double.tryParse(pkg.price.text.trim());
+      final saleRaw=pkg.salePrice.text.trim();
+      final sale=saleRaw.isEmpty?null:double.tryParse(saleRaw);
+      if(pkg.label.text.trim().isEmpty || original==null || original<0)return _p55(context,'اكتب اسم الخيار وسعره','ناوی هەڵبژاردە و نرخی بنووسە','Enter the option name and price');
+      if(saleRaw.isNotEmpty && (sale==null || sale<0 || sale>=original))return _p55(context,'سعر العرض يجب أن يكون أقل من السعر الأصلي','نرخی داشکاندن دەبێت کەمتر بێت','Sale price must be lower than the original price');
+      if(pkg.isDefault)defaults++;
+    }
+    if(defaults>1)return _p55(context,'اختر عبوة افتراضية واحدة فقط','تەنها یەک پاکەتی بنەڕەتی هەڵبژێرە','Choose only one default package');
+    return null;
+  }
+
+  double? _packageEffectivePrice(_ProductPackageDraft pkg){
+    final original=double.tryParse(pkg.price.text.trim());
+    final sale=double.tryParse(pkg.salePrice.text.trim());
+    if(original==null)return null;
+    return sale!=null && sale>=0 && sale<original ? sale : original;
+  }
+
+  Map<String,dynamic> _packagePayload(_ProductPackageDraft pkg,{required bool forceDefault})=>{
+    'label':pkg.resolvedLabel,
+    'unit':pkg.unit,
+    'value':double.tryParse(pkg.value.text.trim()),
+    'price':_packageEffectivePrice(pkg),
+    'original_price':double.tryParse(pkg.price.text.trim()),
+    'sale_price':pkg.salePrice.text.trim().isEmpty?null:double.tryParse(pkg.salePrice.text.trim()),
+    'is_available':pkg.available,
+    'is_default':forceDefault || pkg.isDefault,
+  };
+
   String? _validateVariants(){
+    if(_usePackagesOnly)return _validatePackageList(_standalonePackages);
     if(!_useVariants)return null;
-    if(_variants.isEmpty)return _p55(context,'أضف حجمًا أو خيارًا واحدًا على الأقل','لانیکەم قەبارەیەک زیاد بکە','Add at least one size or option');
+    if(_variants.isEmpty)return _p55(context,'أضف نوعًا واحدًا على الأقل','لانیکەم جۆرێک زیاد بکە','Add at least one type');
     final names=<String>{};
     for(final v in _variants){
       final name=v.name.text.trim();
       final price=double.tryParse(v.price.text.trim());
-      if(name.isEmpty||price==null||price<0)return _p55(context,'أكمل اسم وسعر كل حجم أو خيار','ناو و نرخی هەموو قەبارەکان تەواو بکە','Complete the name and price for every size or option');
-      if(!names.add(name.toLowerCase()))return _p55(context,'لا تكرر اسم الحجم أو الخيار نفسه','ناوی هەمان قەبارە دووبارە مەکە','Do not repeat the same size or option name');
+      if(name.isEmpty)return _p55(context,'أكمل اسم كل نوع','ناوی هەموو جۆرەکان تەواو بکە','Complete every type name');
+      if(v.packages.isEmpty && (price==null||price<0))return _p55(context,'أدخل سعر النوع أو أضف عبوة واحدة على الأقل','نرخ بنووسە یان پاکەت زیاد بکە','Enter a type price or add at least one package');
+      if(v.packages.isNotEmpty){final e=_validatePackageList(v.packages);if(e!=null)return e;}
+      if(!names.add(name.toLowerCase()))return _p55(context,'لا تكرر اسم النوع نفسه','ناوی هەمان جۆر دووبارە مەکە','Do not repeat the same type name');
     }
     return null;
   }
@@ -926,13 +1041,23 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     final categoryId = _selectedCategoryId;
     final parsedBasePrice = double.tryParse(_price.text.trim());
     final variantError = _validateVariants();
-    final variantPrices = _variants.map((v)=>double.tryParse(v.price.text.trim())).whereType<double>().toList();
-    final effectivePrice = _useVariants && variantPrices.isNotEmpty
-        ? (parsedBasePrice != null && parsedBasePrice >= 0 ? parsedBasePrice : variantPrices.reduce((a,b)=>a<b?a:b))
+    final variantPrices = <double>[
+      for (final variant in _variants)
+        if (variant.packages.isNotEmpty)
+          ...variant.packages.map(_packageEffectivePrice).whereType<double>()
+        else if (double.tryParse(variant.price.text.trim()) != null)
+          double.parse(variant.price.text.trim()),
+    ];
+    final standalonePrices=_standalonePackages.map(_packageEffectivePrice).whereType<double>().toList();
+    final optionPrices=_usePackagesOnly?standalonePrices:variantPrices;
+    final effectivePrice = (_useVariants||_usePackagesOnly) && optionPrices.isNotEmpty
+        ? (parsedBasePrice != null && parsedBasePrice >= 0 ? parsedBasePrice : optionPrices.reduce((a,b)=>a<b?a:b))
         : parsedBasePrice;
+    final minQuantity = double.tryParse(_minQuantity.text.trim());
+    final quantityStep = double.tryParse(_quantityStep.text.trim());
     final rawPosition = _position.text.trim();
     final desiredPosition = rawPosition.isEmpty ? null : int.tryParse(rawPosition);
-    if (name.isEmpty || category.isEmpty || categoryId == null || categoryId.isEmpty || effectivePrice == null || effectivePrice < 0 || variantError != null || (rawPosition.isNotEmpty && (desiredPosition == null || desiredPosition < 1))) {
+    if (name.isEmpty || category.isEmpty || categoryId == null || categoryId.isEmpty || effectivePrice == null || effectivePrice < 0 || minQuantity == null || minQuantity <= 0 || quantityStep == null || quantityStep <= 0 || variantError != null || (rawPosition.isNotEmpty && (desiredPosition == null || desiredPosition < 1))) {
       setState(() {
         _saveError = variantError ?? _p55(
           context,
@@ -1000,6 +1125,8 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
         sizeLabel: _sizeLabel.text,
         weightValue: double.tryParse(_weightValue.text.trim()),
         weightUnit: _weightUnit,
+        minQuantity: minQuantity,
+        quantityStep: quantityStep,
         catalogKind: businessType,
       );
 
@@ -1025,16 +1152,55 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
         );
       }
 
+      final variantPayload = <Map<String, dynamic>>[];
+      if(_usePackagesOnly){
+        final hasDefault=_standalonePackages.any((p)=>p.isDefault);
+        final packages=<Map<String,dynamic>>[for(var i=0;i<_standalonePackages.length;i++) _packagePayload(_standalonePackages[i],forceDefault:!hasDefault&&i==0)];
+        final fallbackPrice=packages.map((e)=>(e['price'] as num).toDouble()).reduce((a,b)=>a<b?a:b);
+        variantPayload.add({
+          'name':_packagesOnlyVariantName,
+          'price':fallbackPrice,
+          'sort_order':1,
+          'is_available':true,
+          'image_url':null,
+          'image_path':null,
+          'packages':packages,
+        });
+      }else if (_useVariants) {
+        for (var i = 0; i < _variants.length; i++) {
+          final draft = _variants[i];
+          var variantImageUrl = draft.removeImage ? null : draft.imageUrl;
+          var variantImagePath = draft.removeImage ? null : draft.imagePath;
+          if (draft.selectedImage?.bytes != null) {
+            final up = await ProductsRepository.instance.uploadProductImage(
+              bytes: draft.selectedImage!.bytes!,
+              extension: draft.selectedImage!.extension ?? 'jpg',
+              oldPath: draft.imagePath,
+            );
+            variantImageUrl = up['url'];
+            variantImagePath = up['path'];
+          } else if (draft.removeImage && (draft.imagePath ?? '').isNotEmpty) {
+            await ProductsRepository.instance.removeProductImage(draft.imagePath);
+          }
+          final hasDefault=draft.packages.any((p)=>p.isDefault);
+          final packages=<Map<String,dynamic>>[for(var j=0;j<draft.packages.length;j++) _packagePayload(draft.packages[j],forceDefault:!hasDefault&&j==0)];
+          final fallbackPrice = packages.isNotEmpty
+              ? packages.map((e) => (e['price'] as num).toDouble()).reduce((a,b)=>a<b?a:b)
+              : double.parse(draft.price.text.trim());
+          variantPayload.add({
+            'name': draft.name.text.trim(),
+            'price': fallbackPrice,
+            'sort_order': i + 1,
+            'is_available': draft.available,
+            'image_url': variantImageUrl,
+            'image_path': variantImagePath,
+            'packages': packages,
+          });
+        }
+      }
       await ProductsRepository.instance.replaceProductVariants(
         productId: saved['id'].toString(),
-        variants: _useVariants
-            ? _variants.asMap().entries.map((entry)=>{
-                'name': entry.value.name.text.trim(),
-                'price': double.parse(entry.value.price.text.trim()),
-                'sort_order': entry.key + 1,
-                'is_available': entry.value.available,
-              }).toList()
-            : const <Map<String,dynamic>>[],
+        variants: variantPayload,
       );
 
       // A new product with no selected add-ons should not perform an unnecessary
@@ -1088,7 +1254,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     } on PostgrestException catch (e) {
       if (mounted) {
         final lower='${e.code ?? ''} ${e.message} ${e.details ?? ''}'.toLowerCase();
-        final stage155Missing=lower.contains('store_set_product_position_v6')||lower.contains('store_replace_product_variants_v2')||lower.contains('product_variants')||lower.contains('schema cache');
+        final stage155Missing=lower.contains('store_set_product_position_v6')||(lower.contains('store_replace_product_variants_v3')||lower.contains('store_replace_product_variants_v2'))||lower.contains('product_variants')||lower.contains('schema cache');
         setState(() => _saveError = stage155Missing
             ? _p55(context,'يلزم تشغيل Stage 200 في Supabase مرة واحدة لتفعيل فصل أقسام الشفتات والترتيب الجديد.','پێویستە Stage 200 لە Supabase جێبەجێ بکرێت.','Run the Stage 200 SQL in Supabase once to enable shift-scoped categories and the new ordering system.')
             : e.message);
@@ -1265,104 +1431,253 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
 
   Widget _uploadPlaceholder()=>Column(mainAxisAlignment:MainAxisAlignment.center,children:[const Icon(Icons.add_photo_alternate_outlined,size:48,color:AppColors.orange),const SizedBox(height:8),Text(_p55(context,'إضافة صورة المنتج','زیادکردنی وێنەی بەرهەم','Add product image'),style:const TextStyle(fontWeight:FontWeight.w900)),const SizedBox(height:4),Text(_p55(context,'يفضل صورة واضحة وجذابة • حتى 5MB','وێنەیەکی ڕوون و جوان • تا 5MB','Prefer a clear attractive image • up to 5MB'),style:const TextStyle(color:AppColors.muted,fontSize:12))]);
 
+  void _applySimpleSellingUnit(String unit){
+    setState((){
+      _unit=unit;
+      if(unit=='kg'||unit=='g'||unit=='l'||unit=='ml') _weightUnit=unit;
+      if(unit=='kg'||unit=='l'){
+        _minQuantity.text='0.5';
+        _quantityStep.text='0.5';
+      }else{
+        _minQuantity.text='1';
+        _quantityStep.text='1';
+      }
+      // These legacy fields are kept in the saved model for backward compatibility,
+      // but merchants no longer need to understand or fill them manually.
+      if(unit=='piece') _sizeLabel.text='';
+      if(unit=='pack') _sizeLabel.text=_p55(context,'عبوة','پاکەت','Pack');
+      if(unit=='box') _sizeLabel.text=_p55(context,'صندوق','سندوق','Box');
+      if(unit=='bottle') _sizeLabel.text=_p55(context,'قنينة','بوتڵ','Bottle');
+      if(unit=='kg') _sizeLabel.text=_p55(context,'بالكيلو','بە کیلۆ','Per kg');
+      if(unit=='l') _sizeLabel.text=_p55(context,'باللتر','بە لیتر','Per liter');
+    });
+  }
+
+  Widget _simpleSellingChoice({required String value,required IconData icon,required String label}){
+    final selected=_unit==value;
+    return InkWell(
+      onTap:()=>_applySimpleSellingUnit(value),
+      borderRadius:BorderRadius.circular(14),
+      child:AnimatedContainer(
+        duration:const Duration(milliseconds:160),
+        padding:const EdgeInsets.symmetric(horizontal:12,vertical:12),
+        decoration:BoxDecoration(
+          color:selected?const Color(0xFFFFF1E6):Colors.white,
+          borderRadius:BorderRadius.circular(14),
+          border:Border.all(color:selected?AppColors.orange:const Color(0xFFE1E4E9),width:selected?1.6:1),
+        ),
+        child:Row(mainAxisSize:MainAxisSize.min,children:[
+          Icon(icon,size:19,color:selected?AppColors.orangeDark:AppColors.muted),
+          const SizedBox(width:7),
+          Text(label,style:TextStyle(fontWeight:FontWeight.w900,color:selected?AppColors.orangeDark:null)),
+        ]),
+      ),
+    );
+  }
+
   Widget _detailsStep(){
     final inventory=_usesInventory(businessType);
     final food=_isFoodCatalog(businessType);
-    final drink=_isDrinkCatalog(businessType);
     return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
       _SectionTitle(title:_p55(context,'التفاصيل والسعر','وردەکاری و نرخ','Details & price')),
-      _field(_price,_p55(context,_useVariants?'السعر الأساسي (اختياري مع الأحجام)':'السعر *',_useVariants?'نرخی سەرەکی (ئارەزوومەندانە)':'نرخ *',_useVariants?'Base price (optional with sizes)':'Price *'),hint:'0',keyboard:const TextInputType.numberWithOptions(decimal:true)),
-      if (_supportsWeightPresets(businessType)) ...[
-        Text(_p55(context,'بيع بالوزن','فرۆشتن بە کێش','Sell by weight'), style:const TextStyle(fontWeight:FontWeight.w900)),
-        const SizedBox(height:8),
-        Wrap(spacing:8,runSpacing:8,children:[
-          ActionChip(label:Text(_p55(context,'نصف كيلو','نیو کیلۆ','0.5 kg')),onPressed:()=>setState((){_unit='kg';_weightUnit='kg';_weightValue.text='0.5';_sizeLabel.text=_p55(context,'نصف كيلو','نیو کیلۆ','0.5 kg');})),
-          ActionChip(label:Text(_p55(context,'1 كيلو','1 کیلۆ','1 kg')),onPressed:()=>setState((){_unit='kg';_weightUnit='kg';_weightValue.text='1';_sizeLabel.text=_p55(context,'1 كيلو','1 کیلۆ','1 kg');})),
-          ActionChip(label:Text(_p55(context,'2 كيلو','2 کیلۆ','2 kg')),onPressed:()=>setState((){_unit='kg';_weightUnit='kg';_weightValue.text='2';_sizeLabel.text=_p55(context,'2 كيلو','2 کیلۆ','2 kg');})),
+      _field(_price,_p55(context,(_useVariants||_usePackagesOnly)?'السعر الأساسي (اختياري مع الخيارات)':'السعر *',(_useVariants||_usePackagesOnly)?'نرخی سەرەکی (ئارەزوومەندانە)':'نرخ *',(_useVariants||_usePackagesOnly)?'Base price (optional with options)':'Price *'),hint:'0',keyboard:const TextInputType.numberWithOptions(decimal:true)),
+
+      Container(
+        margin:const EdgeInsets.only(bottom:16),
+        padding:const EdgeInsets.all(14),
+        decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(16),border:Border.all(color:const Color(0xFFE3E7ED))),
+        child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Text(_p55(context,'شلون تبيع هذا المنتج؟','ئەم بەرهەمە چۆن دەفرۆشیت؟','How do you sell this product?'),style:const TextStyle(fontWeight:FontWeight.w900,fontSize:16)),
+          const SizedBox(height:5),
+          Text(_p55(context,'اختار طريقة واحدة فقط، والباقي نضبطه تلقائيًا.','تەنها یەک شێواز هەڵبژێرە.','Choose one method; the rest is set automatically.'),style:const TextStyle(color:AppColors.muted,fontSize:12.5)),
+          const SizedBox(height:12),
+          Wrap(spacing:8,runSpacing:8,children:[
+            _simpleSellingChoice(value:'piece',icon:Icons.looks_one_outlined,label:_p55(context,'بالقطعة','بە دانە','Per piece')),
+            _simpleSellingChoice(value:'pack',icon:Icons.inventory_2_outlined,label:_p55(context,'عبوة / مجموعة','پاکەت','Pack')),
+            _simpleSellingChoice(value:'box',icon:Icons.all_inbox_outlined,label:_p55(context,'صندوق','سندوق','Box')),
+            _simpleSellingChoice(value:'kg',icon:Icons.scale_outlined,label:_p55(context,'بالكيلو','بە کیلۆ','Per kg')),
+            _simpleSellingChoice(value:'l',icon:Icons.local_drink_outlined,label:_p55(context,'باللتر','بە لیتر','Per liter')),
+          ]),
+          if(_unit=='kg'||_unit=='l')...[
+            const SizedBox(height:12),
+            Container(
+              padding:const EdgeInsets.symmetric(horizontal:12,vertical:10),
+              decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(12)),
+              child:Row(children:[
+                const Icon(Icons.info_outline_rounded,size:19,color:AppColors.orange),
+                const SizedBox(width:8),
+                Expanded(child:Text(_p55(context,
+                  _unit=='kg'?'العميل يقدر يطلب 0.5، 1، 1.5 كيلو وهكذا.':'العميل يقدر يطلب 0.5، 1، 1.5 لتر وهكذا.',
+                  'کڕیار دەتوانێت بە نیو یەکە زیاد بکات.',
+                  _unit=='kg'?'Customer can order 0.5, 1, 1.5 kg and so on.':'Customer can order 0.5, 1, 1.5 L and so on.'
+                ),style:const TextStyle(fontSize:12.5,fontWeight:FontWeight.w700))),
+              ]),
+            ),
+          ],
         ]),
-        const SizedBox(height:14),
-      ] else ...[
-        Text(_p55(context,'كمية / عبوة جاهزة','بڕ / پاکەت','Pack / quantity'), style:const TextStyle(fontWeight:FontWeight.w900)),
-        const SizedBox(height:8),
-        Wrap(spacing:8,runSpacing:8,children:[
-          ActionChip(label:Text(_p55(context,'قطعة واحدة','1 دانە','1 piece')),onPressed:()=>setState((){_unit='piece';_sizeLabel.text=_p55(context,'قطعة واحدة','1 دانە','1 piece');})),
-          ActionChip(label:Text(_p55(context,'5 قطع','5 دانە','5 pieces')),onPressed:()=>setState((){_unit='pack';_sizeLabel.text=_p55(context,'5 قطع','5 دانە','5 pieces');})),
-          ActionChip(label:Text(_p55(context,'10 قطع','10 دانە','10 pieces')),onPressed:()=>setState((){_unit='pack';_sizeLabel.text=_p55(context,'10 قطع','10 دانە','10 pieces');})),
-          ActionChip(label:Text(_p55(context,'12 قطعة','12 دانە','12 pieces')),onPressed:()=>setState((){_unit='pack';_sizeLabel.text=_p55(context,'12 قطعة','12 دانە','12 pieces');})),
-        ]),
-        const SizedBox(height:14),
-      ],
+      ),
+
       if(food)...[
         _field(_prep,_p55(context,'وقت التحضير بالدقائق','کاتی ئامادەکردن بە خولەک','Preparation time (minutes)'),hint:'30',keyboard:TextInputType.number),
         _field(_calories,_p55(context,'السعرات الحرارية (اختياري)','کالۆری (ئارەزوومەندانە)','Calories (optional)'),hint:'450',keyboard:TextInputType.number),
         Text(_p55(context,'نوع المنتج الغذائي','جۆری بەرهەمی خواردن','Food product type'),style:const TextStyle(fontWeight:FontWeight.w900)),const SizedBox(height:10),
         Wrap(spacing:10,runSpacing:10,children:[_TypeChoice(icon:Icons.ramen_dining_rounded,label:_p55(context,'فردي','تاک','Single'),selected:_type=='single',onTap:()=>setState(()=>_type='single')),_TypeChoice(icon:Icons.groups_2_outlined,label:_p55(context,'عائلي','خێزانی','Family'),selected:_type=='family',onTap:()=>setState(()=>_type='family')),_TypeChoice(icon:Icons.local_drink_outlined,label:_p55(context,'مشروب','خواردنەوە','Drink'),selected:_type=='drink',onTap:()=>setState(()=>_type='drink'))]),const SizedBox(height:18),
       ],
-      if(drink)...[
-        Container(padding:const EdgeInsets.all(14),margin:const EdgeInsets.only(bottom:14),decoration:BoxDecoration(color:const Color(0xFFF6F9FF),borderRadius:BorderRadius.circular(16)),child:Row(children:[const Icon(Icons.local_drink_rounded,color:Color(0xFF4776D0)),const SizedBox(width:10),Expanded(child:Text(_p55(context,'يمكنك تسجيل الحجم والعبوة والمخزون والباركود للمشروب أدناه.','دەتوانیت قەبارە و کۆگا تۆمار بکەیت.','You can record size, package, stock and barcode below.'),style:const TextStyle(fontWeight:FontWeight.w700,color:Color(0xFF3C4657))))])),
-      ],
+
       if(inventory)...[
-        Wrap(spacing:12,runSpacing:4,children:[SizedBox(width:260,child:_field(_brand,_p55(context,'العلامة التجارية (اختياري)','براند','Brand (optional)'))),SizedBox(width:260,child:_field(_barcode,_p55(context,'الباركود (اختياري)','بارکۆد','Barcode (optional)'),keyboard:TextInputType.number)),SizedBox(width:260,child:_field(_sku,_p55(context,'رمز المنتج SKU (اختياري)','کۆدی بەرهەم','SKU (optional)')))]),
-        _field(_sizeLabel,_p55(context,'الحجم / العبوة (اختياري)','قەبارە / پاکەت','Size / package (optional)'),hint:_p55(context,'مثال: 1 لتر، علبة 12 حبة','نموونە: 1 لیتر','Example: 1 L, pack of 12')),
-        Row(children:[Expanded(child:DropdownButtonFormField<String>(initialValue:_unit,decoration:InputDecoration(labelText:_p55(context,'وحدة البيع','یەکە','Selling unit'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(14))),items:{'piece':_p55(context,'قطعة','دانە','Piece'),'pack':_p55(context,'عبوة','پاکەت','Pack'),'box':_p55(context,'صندوق','سندوق','Box'),'bottle':_p55(context,'قنينة','بوتڵ','Bottle'),'kg':_p55(context,'كيلوغرام','کیلۆگرام','Kilogram'),'g':_p55(context,'غرام','گرام','Gram'),'l':_p55(context,'لتر','لیتر','Liter'),'ml':_p55(context,'مل','مل','ml')}.entries.map((e)=>DropdownMenuItem(value:e.key,child:Text(e.value))).toList(),onChanged:(v)=>setState((){_unit=v??'piece';if(_unit=='kg'||_unit=='g')_weightUnit=_unit;}))),const SizedBox(width:12),Expanded(child:_field(_weightValue,_p55(context,'الوزن / السعة الرقمية','کێش / قەبارە','Weight / volume'),keyboard:const TextInputType.numberWithOptions(decimal:true)))]),
-        SwitchListTile.adaptive(contentPadding:EdgeInsets.zero,value:_trackStock,onChanged:(v)=>setState(()=>_trackStock=v),activeThumbColor:AppColors.orange,title:Text(_p55(context,'تتبع المخزون','شوێنکەوتنی کۆگا','Track stock'),style:const TextStyle(fontWeight:FontWeight.w900)),subtitle:Text(_p55(context,'فعّله للمنتجات التي لها كمية محددة','بۆ بەرهەمە سنووردارەکان','Enable for items with limited quantity'))),
-        if(_trackStock)_field(_stock,_p55(context,'الكمية المتوفرة','بڕی بەردەست','Stock quantity'),hint:'0',keyboard:const TextInputType.numberWithOptions(decimal:true)),
-      ],
-      if(!food && !inventory)...[_field(_brand,_p55(context,'العلامة / النوع (اختياري)','جۆر / براند','Brand / type (optional)'))],
-      if(!inventory)...[
-        _field(_sizeLabel,_p55(context,'الكمية / الحجم (اختياري)','بڕ / قەبارە','Quantity / size (optional)'),hint:_p55(context,'مثال: 10 قطع، 1 كيلو','نموونە: 10 دانە','Example: 10 pieces, 1 kg')),
-        DropdownButtonFormField<String>(
-          initialValue:_unit,
-          decoration:InputDecoration(labelText:_p55(context,'وحدة البيع','یەکە','Selling unit'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(14))),
-          items:{'piece':_p55(context,'قطعة','دانە','Piece'),'pack':_p55(context,'عبوة / مجموعة','پاکەت','Pack'),'box':_p55(context,'صندوق','سندوق','Box'),'kg':_p55(context,'كيلوغرام','کیلۆگرام','Kilogram'),'g':_p55(context,'غرام','گرام','Gram')}.entries.map((e)=>DropdownMenuItem(value:e.key,child:Text(e.value))).toList(),
-          onChanged:(v)=>setState((){_unit=v??'piece';if(_unit=='kg'||_unit=='g')_weightUnit=_unit;}),
+        SwitchListTile.adaptive(
+          contentPadding:EdgeInsets.zero,
+          value:_trackStock,
+          onChanged:(v)=>setState(()=>_trackStock=v),
+          activeThumbColor:AppColors.orange,
+          title:Text(_p55(context,'عندي كمية محددة بالمخزن','بڕێکی دیاریکراوم هەیە','I have limited stock'),style:const TextStyle(fontWeight:FontWeight.w900)),
+          subtitle:Text(_p55(context,'فعّلها فقط إذا تريد يتوقف المنتج لما تخلص الكمية.','تەنها ئەگەر بڕەکە سنووردارە چالاکی بکە.','Enable only if the product should stop when stock runs out.')),
         ),
-        const SizedBox(height:16),
-        if(_supportsWeightPresets(businessType)) _field(_weightValue,_p55(context,'الوزن','کێش','Weight'),keyboard:const TextInputType.numberWithOptions(decimal:true)),
+        if(_trackStock)_field(_stock,_p55(context,'شكد الكمية الموجودة؟','بڕی بەردەست','How much is in stock?'),hint:'0',keyboard:const TextInputType.numberWithOptions(decimal:true)),
       ],
-      _field(_tags,_p55(context,'وسوم المنتج (افصل بفاصلة)','تاگەکان','Product tags (comma separated)'),hint:_p55(context,'الأكثر طلبًا، جديد، عرض','زۆر داواکراو، نوێ','Popular, New, Offer')),
-      _field(_notes,_p55(context,'ملاحظة تظهر للعميل (اختياري)','تێبینی بۆ کڕیار','Note shown to customer (optional)'),hint:_p55(context,'مثال: السعر للعبوة، المنتج طازج يوميًا، يحفظ مبردًا...','نموونە: تێبینی بۆ کڕیار','Example: pack price, baked fresh daily, keep refrigerated...'),maxLines:4)
+
+      _field(_tags,_p55(context,'وسوم المنتج (اختياري)','تاگەکان','Product tags (optional)'),hint:_p55(context,'مثال: الأكثر طلبًا، جديد، عرض','نموونە: زۆر داواکراو، نوێ','Example: Popular, New, Offer')),
+      _field(_notes,_p55(context,'ملاحظة تظهر للعميل (اختياري)','تێبینی بۆ کڕیار','Note shown to customer (optional)'),hint:_p55(context,'مثال: المنتج طازج يوميًا، يحفظ مبردًا...','نموونە: تێبینی بۆ کڕیار','Example: baked fresh daily, keep refrigerated...'),maxLines:4),
     ]);
+  }
+
+  Widget _packageEditor(List<_ProductPackageDraft> packages,{required VoidCallback addPackage,required void Function(int) removePackage})=>Column(
+    crossAxisAlignment:CrossAxisAlignment.stretch,
+    children:[
+      ...packages.asMap().entries.map((entry){
+        final i=entry.key;final p=entry.value;
+        return Container(
+          key:ValueKey(p),margin:const EdgeInsets.only(top:10),padding:const EdgeInsets.all(12),
+          decoration:BoxDecoration(color:const Color(0xFFF9FAFB),borderRadius:BorderRadius.circular(14),border:Border.all(color:const Color(0xFFE4E7EC))),
+          child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+            Row(children:[Expanded(child:Text(_p55(context,'عبوة / وزن ${i+1}','پاکەت ${i+1}','Package ${i+1}'),style:const TextStyle(fontWeight:FontWeight.w900))),IconButton(onPressed:()=>removePackage(i),icon:const Icon(Icons.delete_outline_rounded,color:Colors.red),tooltip:_p55(context,'حذف العبوة','سڕینەوە','Delete package'))]),
+            LayoutBuilder(builder:(context,c){
+              final label=TextField(controller:p.label,decoration:InputDecoration(labelText:_p55(context,'اسم الخيار *','ناوی هەڵبژاردە *','Option name *'),hintText:_p55(context,'مثال: نصف كيلو، 1 كيلو، علبة 6 حبات','نموونە: نیو کیلۆ، 1 کیلۆ','Example: Half kilo, 1 kilo, Box of 6'),helperText:_p55(context,'هذا الاسم يظهر للعميل كما تكتبه','ئەم ناوە بۆ کڕیار دەردەکەوێت','This name is shown to the customer exactly as entered'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));
+              final unit=DropdownButtonFormField<String>(initialValue:_packageUnits.contains(p.unit)?p.unit:'custom',decoration:InputDecoration(labelText:_p55(context,'الوحدة','یەکە','Unit'),helperText:_p55(context,'تحدد طريقة عرض الكمية: كيلو، لتر، قطعة...','شێوازی بڕ دیاری دەکات','Controls quantity display: kg, liter, piece...'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))),items:_packageUnits.map((u)=>DropdownMenuItem(value:u,child:Text(_packageUnitLabel(u)))).toList(),onChanged:(v)=>setState(()=>p.unit=v??'custom'));
+              if(c.maxWidth<650)return Column(children:[label,const SizedBox(height:8),unit]);
+              return Row(children:[Expanded(child:label),const SizedBox(width:8),Expanded(child:unit)]);
+            }),
+            const SizedBox(height:10),
+            LayoutBuilder(builder:(context,c){
+              final original=TextField(controller:p.price,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:_p55(context,'السعر الأصلي *','نرخی سەرەکی *','Original price *'),suffixText:'د.ع',border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));
+              final sale=TextField(controller:p.salePrice,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:_p55(context,'سعر العرض (اختياري)','نرخی داشکاندن','Sale price (optional)'),suffixText:'د.ع',helperText:_p55(context,'إذا تركته فارغًا يظهر السعر الأصلي فقط','ئەگەر بەتاڵ بێت نرخی سەرەکی دەردەکەوێت','Leave empty for no discount'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));
+              if(c.maxWidth<560)return Column(children:[original,const SizedBox(height:8),sale]);
+              return Row(children:[Expanded(child:original),const SizedBox(width:8),Expanded(child:sale)]);
+            }),
+            const SizedBox(height:4),
+            SwitchListTile.adaptive(
+              contentPadding:EdgeInsets.zero,
+              dense:true,
+              value:p.available,
+              onChanged:(v)=>setState(()=>p.available=v),
+              activeThumbColor:AppColors.orange,
+              title:Text(_p55(context,'متوفر للعميل','بەردەستە بۆ کڕیار','Available to customer'),style:const TextStyle(fontWeight:FontWeight.w800)),
+            ),
+          ]),
+        );
+      }),
+      const SizedBox(height:10),
+      Align(alignment:AlignmentDirectional.centerStart,child:OutlinedButton.icon(onPressed:addPackage,icon:const Icon(Icons.add_box_outlined),label:Text(_p55(context,'إضافة عبوة / وزن','زیادکردنی پاکەت','Add package / weight')))),
+    ],
+  );
+
+  static const List<String> _packageUnits=<String>['piece','g','kg','ml','l','bottle','can','box','carton','pack','bag','custom'];
+  String _packageUnitLabel(String unit){
+    switch(unit){
+      case 'piece':return _p55(context,'حبة / قطعة','دانە','Piece');
+      case 'g':return _p55(context,'غرام','گرام','Gram');
+      case 'kg':return _p55(context,'كغم','کگم','Kg');
+      case 'ml':return _p55(context,'مل','مل','ml');
+      case 'l':return _p55(context,'لتر','لیتر','Liter');
+      case 'bottle':return _p55(context,'قنينة','بوتڵ','Bottle');
+      case 'can':return _p55(context,'علبة','قووطی','Can');
+      case 'box':return _p55(context,'صندوق','سندوق','Box');
+      case 'carton':return _p55(context,'كرتون','کارتۆن','Carton');
+      case 'pack':return _p55(context,'باكيت','پاکەت','Pack');
+      case 'bag':return _p55(context,'كيس','کیسە','Bag');
+      default:return _p55(context,'مخصص','تایبەت','Custom');
+    }
   }
 
   Widget _variantsSection()=>Container(
     padding:const EdgeInsets.all(16),
     decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(18),border:Border.all(color:const Color(0xFFE3E7ED))),
     child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+      Text(_p55(context,'طريقة المنتج','شێوازی بەرهەم','Product mode'),style:const TextStyle(fontWeight:FontWeight.w900,fontSize:16)),
+      const SizedBox(height:6),
+      Text(_p55(context,'المطاعم تبقى على الوضع البسيط. فعّل الخيارات المتقدمة فقط للمنتجات التي تحتاج أنواعًا أو عبوات أو أوزانًا.','شێوازی سادە بۆ چێشتخانەکان بنەڕەتییە.','Restaurants stay simple by default. Enable advanced options only when a product needs types, packages or weights.'),style:const TextStyle(color:AppColors.muted,height:1.45)),
+      const SizedBox(height:10),
       SwitchListTile.adaptive(
         contentPadding:EdgeInsets.zero,
-        value:_useVariants,
-        onChanged:(v)=>setState((){_useVariants=v;if(v&&_variants.isEmpty)_variants.add(_ProductVariantDraft());}),
+        value:_useVariants||_usePackagesOnly,
+        onChanged:(v)=>setState((){if(!v){_useVariants=false;_usePackagesOnly=false;}else if(!_useVariants&&!_usePackagesOnly){_usePackagesOnly=true;if(_standalonePackages.isEmpty)_standalonePackages.add(_ProductPackageDraft(isDefault:true));}}),
         activeThumbColor:AppColors.orange,
-        title:Text(_p55(context,'للمنتج أحجام أو خيارات بأسعار مختلفة','بەرهەمەکە قەبارە یان هەڵبژاردەی جیاواز هەیە','Product has sizes/options with different prices'),style:const TextStyle(fontWeight:FontWeight.w900)),
-        subtitle:Text(_p55(context,'مثال: صغير، وسط، كبير — ولكل واحد سعره','نموونە: بچووک، ناوەند، گەورە','Example: Small, Medium, Large — each with its own price')),
+        title:Text(_p55(context,'هذا المنتج لديه أنواع أو أحجام/عبوات','ئەم بەرهەمە جۆر یان پاکەتی هەیە','This product has types or packages'),style:const TextStyle(fontWeight:FontWeight.w900)),
       ),
+      if(!(_useVariants||_usePackagesOnly))Container(margin:const EdgeInsets.only(top:8),padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(14),border:Border.all(color:const Color(0xFFE4E7EC))),child:Row(children:[const Icon(Icons.check_circle_outline_rounded,color:Color(0xFF169447)),const SizedBox(width:8),Expanded(child:Text(_p55(context,'منتج بسيط: الاسم + السعر + الصورة + الإضافات إن وجدت.','بەرهەمی سادە.','Simple product: name + price + image + optional add-ons.'),style:const TextStyle(fontWeight:FontWeight.w800)))])),
+      if(_useVariants||_usePackagesOnly)...[
+        const SizedBox(height:12),
+        SegmentedButton<String>(
+          segments:[ButtonSegment(value:'packages',icon:const Icon(Icons.inventory_2_outlined),label:Text(_p55(context,'عبوات/أوزان فقط','پاکەت/کێش','Packages/weights'))),ButtonSegment(value:'variants',icon:const Icon(Icons.account_tree_outlined),label:Text(_p55(context,'أنواع + عبوات','جۆر + پاکەت','Types + packages')))],
+          selected:{_useVariants?'variants':'packages'},
+          onSelectionChanged:(s)=>setState((){final mode=s.first;_useVariants=mode=='variants';_usePackagesOnly=mode=='packages';if(_useVariants&&_variants.isEmpty)_variants.add(_ProductVariantDraft());if(_usePackagesOnly&&_standalonePackages.isEmpty)_standalonePackages.add(_ProductPackageDraft(isDefault:true));}),
+        ),
+      ],
+      if(_usePackagesOnly)...[
+        const Divider(height:26),
+        Text(_p55(context,'العبوات والأوزان','پاکەت و کێش','Packages & weights'),style:const TextStyle(fontWeight:FontWeight.w900,fontSize:15)),
+        const SizedBox(height:4),
+        Text(_p55(context,'مثال: 500 غرام، 1 كغم، باكيت 6، كرتون 24. لكل خيار سعر وتوفر وخصم اختياري.','نموونە: 500 گرام، 1 کگم، کارتۆن.','Examples: 500 g, 1 kg, pack of 6, carton of 24. Each can have its own price, availability and optional discount.'),style:const TextStyle(color:AppColors.muted,fontSize:12,height:1.4)),
+        _packageEditor(_standalonePackages,addPackage:_addStandalonePackage,removePackage:_removeStandalonePackage),
+      ],
       if(_useVariants)...[
-        const Divider(height:20),
+        const Divider(height:26),
+        Text(_p55(context,'أنواع المنتج','جۆرەکانی بەرهەم','Product types'),style:const TextStyle(fontWeight:FontWeight.w900,fontSize:15)),
+        const SizedBox(height:4),
+        Text(_p55(context,'كل نوع يمكن أن يكون بسعر واحد، أو يحتوي عبوات/أوزان مستقلة.','هەر جۆرێک دەتوانێت پاکەتی تایبەتی هەبێت.','Each type can have one price or its own packages/weights.'),style:const TextStyle(color:AppColors.muted,fontSize:12,height:1.4)),
+        const SizedBox(height:12),
         ..._variants.asMap().entries.map((entry){
           final i=entry.key;final v=entry.value;
-          return Container(
-            key:ValueKey(v),
-            margin:const EdgeInsets.only(bottom:10),padding:const EdgeInsets.all(12),
-            decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(14),border:Border.all(color:const Color(0xFFE4E7EC))),
-            child:Column(children:[
-              LayoutBuilder(builder:(context,c){
-                final nameField=TextField(controller:v.name,decoration:InputDecoration(labelText:_p55(context,'اسم الحجم / الخيار','ناوی قەبارە','Size / option name'),hintText:_p55(context,'مثال: وسط','نموونە: ناوەند','Example: Medium'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));
-                final priceField=TextField(controller:v.price,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:_p55(context,'السعر','نرخ','Price'),suffixText:'د.ع',border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));
-                if(c.maxWidth<520)return Column(children:[nameField,const SizedBox(height:10),priceField]);
-                return Row(children:[Expanded(child:nameField),const SizedBox(width:10),Expanded(child:priceField)]);
-              }),
-              const SizedBox(height:8),
-              Row(children:[
-                Expanded(child:SwitchListTile.adaptive(contentPadding:EdgeInsets.zero,dense:true,value:v.available,onChanged:(x)=>setState(()=>v.available=x),activeThumbColor:AppColors.orange,title:Text(_p55(context,'متاح','بەردەست','Available'),style:const TextStyle(fontWeight:FontWeight.w800)))),
-                IconButton(tooltip:_p55(context,'للأعلى','بۆ سەرەوە','Move up'),onPressed:i>0?()=>_moveVariant(i,i-1):null,icon:const Icon(Icons.arrow_upward_rounded)),
-                IconButton(tooltip:_p55(context,'للأسفل','بۆ خوارەوە','Move down'),onPressed:i<_variants.length-1?()=>_moveVariant(i,i+1):null,icon:const Icon(Icons.arrow_downward_rounded)),
-                IconButton(tooltip:_p55(context,'حذف','سڕینەوە','Delete'),onPressed:()=>_removeVariant(i),icon:const Icon(Icons.delete_outline_rounded,color:Colors.red)),
-              ]),
-            ]),
+          Widget imageBox()=>InkWell(
+            onTap:_saving?null:()=>_pickVariantImage(v),
+            borderRadius:BorderRadius.circular(14),
+            child:Container(
+              width:110,
+              height:92,
+              clipBehavior:Clip.antiAlias,
+              decoration:BoxDecoration(color:const Color(0xFFFFFAF6),borderRadius:BorderRadius.circular(14),border:Border.all(color:const Color(0xFFFFD6AD))),
+              child:Stack(
+                fit:StackFit.expand,
+                children:[
+                  v.selectedImage?.bytes!=null
+                      ?Image.memory(v.selectedImage!.bytes!,fit:BoxFit.cover)
+                      :(v.imageUrl??'').isNotEmpty
+                          ?PersistentNetworkImage(url:v.imageUrl!,fit:BoxFit.cover,cacheWidth:420,placeholder:const Icon(Icons.image_outlined,color:AppColors.orange),errorBuilder:(_,_,_)=>const Icon(Icons.add_photo_alternate_outlined,color:AppColors.orange))
+                          :const Icon(Icons.add_photo_alternate_outlined,color:AppColors.orange,size:34),
+                  PositionedDirectional(
+                    end:6,
+                    bottom:6,
+                    child:Container(
+                      padding:const EdgeInsets.all(5),
+                      decoration:BoxDecoration(color:Colors.black54,borderRadius:BorderRadius.circular(20)),
+                      child:const Icon(Icons.crop_rounded,size:17,color:Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           );
+          return Container(key:ValueKey(v),margin:const EdgeInsets.only(bottom:12),padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(16),border:Border.all(color:const Color(0xFFE4E7EC))),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+            Row(children:[Container(width:30,height:30,alignment:Alignment.center,decoration:BoxDecoration(color:const Color(0xFFFFF1E6),borderRadius:BorderRadius.circular(9)),child:Text('${i+1}',style:const TextStyle(fontWeight:FontWeight.w900,color:AppColors.orangeDark))),const SizedBox(width:8),Expanded(child:Text(_p55(context,'نوع ${i+1}','جۆری ${i+1}','Type ${i+1}'),style:const TextStyle(fontWeight:FontWeight.w900)))]),
+            const SizedBox(height:10),
+            LayoutBuilder(builder:(context,c){final nameField=TextField(controller:v.name,decoration:InputDecoration(labelText:_p55(context,'اسم النوع *','ناوی جۆر *','Type name *'),hintText:_p55(context,'مثال: رز عنبر','نموونە: جۆری 1','Example: Amber rice'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));final priceField=TextField(controller:v.price,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:_p55(context,'سعر النوع (إذا بدون عبوات)','نرخی جۆر','Type price (when no packages)'),suffixText:'د.ع',border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));if(c.maxWidth<620)return Column(children:[Row(children:[imageBox(),const SizedBox(width:10),Expanded(child:nameField)]),const SizedBox(height:10),priceField]);return Row(children:[imageBox(),const SizedBox(width:10),Expanded(child:nameField),const SizedBox(width:10),Expanded(child:priceField)]);}),
+            if(v.selectedImage!=null||(v.imageUrl??'').isNotEmpty)Align(alignment:AlignmentDirectional.centerStart,child:TextButton.icon(onPressed:()=>setState((){v.selectedImage=null;v.imageUrl=null;v.removeImage=true;}),icon:const Icon(Icons.delete_outline,color:Colors.red),label:Text(_p55(context,'إزالة صورة النوع','سڕینەوەی وێنە','Remove type image'),style:const TextStyle(color:Colors.red)))),
+            const SizedBox(height:6),
+            ExpansionTile(tilePadding:EdgeInsets.zero,childrenPadding:EdgeInsets.zero,title:Text(_p55(context,'عبوات/أوزان هذا النوع','پاکەتەکانی ئەم جۆرە','Packages/weights for this type'),style:const TextStyle(fontWeight:FontWeight.w900)),subtitle:Text(v.packages.isEmpty?_p55(context,'اختياري — اتركها فارغة إذا للنوع سعر واحد','ئارەزوومەندانە','Optional — leave empty for one type price'):_p55(context,'${v.packages.length} خيارات','${v.packages.length} هەڵبژاردە','${v.packages.length} options')),children:[_packageEditor(v.packages,addPackage:()=>setState(()=>v.addPackage()),removePackage:(index)=>setState(()=>v.removePackage(index)))]),
+            Row(children:[Expanded(child:SwitchListTile.adaptive(contentPadding:EdgeInsets.zero,dense:true,value:v.available,onChanged:(x)=>setState(()=>v.available=x),activeThumbColor:AppColors.orange,title:Text(_p55(context,'متاح','بەردەست','Available'),style:const TextStyle(fontWeight:FontWeight.w800)))),IconButton(tooltip:_p55(context,'للأعلى','بۆ سەرەوە','Move up'),onPressed:i>0?()=>_moveVariant(i,i-1):null,icon:const Icon(Icons.arrow_upward_rounded)),IconButton(tooltip:_p55(context,'للأسفل','بۆ خوارەوە','Move down'),onPressed:i<_variants.length-1?()=>_moveVariant(i,i+1):null,icon:const Icon(Icons.arrow_downward_rounded)),IconButton(tooltip:_p55(context,'حذف','سڕینەوە','Delete'),onPressed:()=>_removeVariant(i),icon:const Icon(Icons.delete_outline_rounded,color:Colors.red))]),
+          ]));
         }),
-        Align(alignment:AlignmentDirectional.centerStart,child:OutlinedButton.icon(onPressed:_addVariant,icon:const Icon(Icons.add_rounded),label:Text(_p55(context,'إضافة حجم / خيار','زیادکردنی قەبارە','Add size / option')))),
+        Align(alignment:AlignmentDirectional.centerStart,child:OutlinedButton.icon(onPressed:_addVariant,icon:const Icon(Icons.add_rounded),label:Text(_p55(context,'إضافة نوع','زیادکردنی جۆر','Add type')))),
       ],
     ]),
   );
@@ -1372,13 +1687,57 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
 }
 
 class _ProductVariantDraft {
-  _ProductVariantDraft({String name='', double? price, this.available=true})
+  _ProductVariantDraft({String name='', double? price, this.available=true, this.imageUrl, this.imagePath, List<Map<String,dynamic>> packages=const []})
       : name=TextEditingController(text:name),
-        price=TextEditingController(text:price==null?'':price.toStringAsFixed(price.truncateToDouble()==price?0:2));
+        price=TextEditingController(text:price==null?'':price.toStringAsFixed(price.truncateToDouble()==price?0:2)),
+        packages=packages.map((p)=>_ProductPackageDraft.fromMap(p)).toList();
   final TextEditingController name;
   final TextEditingController price;
   bool available;
-  void dispose(){name.dispose();price.dispose();}
+  String? imageUrl;
+  String? imagePath;
+  PlatformFile? selectedImage;
+  bool removeImage=false;
+  final List<_ProductPackageDraft> packages;
+  void addPackage()=>packages.add(_ProductPackageDraft(isDefault:packages.isEmpty));
+  void removePackage(int index){if(index<0||index>=packages.length)return;final p=packages.removeAt(index);p.dispose();if(packages.isNotEmpty&&!packages.any((e)=>e.isDefault))packages.first.isDefault=true;}
+  void dispose(){name.dispose();price.dispose();for(final p in packages){p.dispose();}}
+}
+
+class _ProductPackageDraft {
+  _ProductPackageDraft({String label='',String value='',this.unit='custom',double? price,double? salePrice,this.available=true,this.isDefault=false})
+      : label=TextEditingController(text:label),
+        value=TextEditingController(text:value),
+        price=TextEditingController(text:price==null?'':price.toStringAsFixed(price.truncateToDouble()==price?0:2)),
+        salePrice=TextEditingController(text:salePrice==null?'':salePrice.toStringAsFixed(salePrice.truncateToDouble()==salePrice?0:2));
+  factory _ProductPackageDraft.fromMap(Map<String,dynamic> p){
+    final original=((p['original_price'] as num?)??(p['price'] as num?))?.toDouble();
+    final sale=(p['sale_price'] as num?)?.toDouble();
+    return _ProductPackageDraft(
+      label:p['label']?.toString()??'',
+      value:p['value']?.toString()??'',
+      unit:p['unit']?.toString()??'custom',
+      price:original,
+      salePrice:sale,
+      available:p['is_available']!=false,
+      isDefault:p['is_default']==true,
+    );
+  }
+  final TextEditingController label;
+  final TextEditingController value;
+  final TextEditingController price;
+  final TextEditingController salePrice;
+  String unit;
+  bool available;
+  bool isDefault;
+  String get resolvedLabel{
+    final custom=label.text.trim();
+    if(custom.isNotEmpty)return custom;
+    final amount=value.text.trim();
+    if(amount.isEmpty)return unit=='custom'?'':unit;
+    return '$amount $unit';
+  }
+  void dispose(){label.dispose();value.dispose();price.dispose();salePrice.dispose();}
 }
 
 class _SectionTitle extends StatelessWidget { const _SectionTitle({required this.title});final String title;@override Widget build(BuildContext context)=>Padding(padding:const EdgeInsets.only(bottom:18),child:Text(title,style:const TextStyle(fontSize:21,fontWeight:FontWeight.w900)));}

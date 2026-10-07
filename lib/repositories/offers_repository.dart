@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth_service.dart';
@@ -56,6 +57,8 @@ class OffersRepository {
     required DateTime startAt,
     required DateTime endAt,
     required bool isActive,
+    String? imageUrl,
+    String? imagePath,
   }) async {
     final storeId = await _storeId();
     if (storeId == null || storeId.isEmpty) {
@@ -80,6 +83,8 @@ class OffersRepository {
       'start_at': startAt.toUtc().toIso8601String(),
       'end_at': endAt.toUtc().toIso8601String(),
       'is_active': isActive,
+      'image_url': (imageUrl ?? '').trim().isEmpty ? null : imageUrl,
+      'image_path': (imagePath ?? '').trim().isEmpty ? null : imagePath,
     };
     if (promotionId == null) {
       return _client.from('store_promotions').insert(values).select().single();
@@ -122,6 +127,8 @@ class OffersRepository {
     required DateTime startAt,
     required DateTime endAt,
     required bool isActive,
+    String? imageUrl,
+    String? imagePath,
   }) async {
     final storeId = await _requireStoreId();
     _validateDiscount(discountType, discountValue);
@@ -146,6 +153,8 @@ class OffersRepository {
       'start_at': startAt.toUtc().toIso8601String(),
       'end_at': endAt.toUtc().toIso8601String(),
       'is_active': isActive,
+      'image_url': (imageUrl ?? '').trim().isEmpty ? null : imageUrl,
+      'image_path': (imagePath ?? '').trim().isEmpty ? null : imagePath,
     };
     if (couponId == null) {
       return _client.from('coupons').insert(values).select().single();
@@ -161,6 +170,39 @@ class OffersRepository {
   Future<void> deleteCoupon(String id) async {
     final storeId = await _requireStoreId();
     await _client.from('coupons').delete().eq('id', id).eq('store_id', storeId);
+  }
+
+
+  Future<Map<String, String>> uploadCampaignImage({
+    required Uint8List bytes,
+    required String extension,
+    String? oldPath,
+  }) async {
+    final storeId = await _requireStoreId();
+    final ext = extension.toLowerCase().replaceAll('.', '') == 'webp'
+        ? 'webp'
+        : extension.toLowerCase().replaceAll('.', '') == 'png'
+            ? 'png'
+            : 'jpg';
+    final path = '$storeId/campaigns/${DateTime.now().microsecondsSinceEpoch}.$ext';
+    await _client.storage.from('product-images').uploadBinary(
+      path,
+      bytes,
+      fileOptions: FileOptions(
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: ext == 'png' ? 'image/png' : ext == 'webp' ? 'image/webp' : 'image/jpeg',
+      ),
+    );
+    if ((oldPath ?? '').isNotEmpty && oldPath != path) {
+      try { await _client.storage.from('product-images').remove([oldPath!]); } catch (_) {}
+    }
+    return {'path': path, 'url': _client.storage.from('product-images').getPublicUrl(path)};
+  }
+
+  Future<void> removeCampaignImage(String? path) async {
+    if ((path ?? '').isEmpty) return;
+    try { await _client.storage.from('product-images').remove([path!]); } catch (_) {}
   }
 
   Future<Map<String, dynamic>> quoteDiscount({
