@@ -1,5 +1,12 @@
 part of 'partner_dashboard.dart';
 
+String _ordersLocalText(BuildContext context, String ar, String ku, String en) {
+  final code = Localizations.localeOf(context).languageCode.toLowerCase();
+  if (code.startsWith('ku')) return ku;
+  if (code.startsWith('en')) return en;
+  return ar;
+}
+
 class _OrdersManagementPage extends StatefulWidget {
   const _OrdersManagementPage();
 
@@ -18,6 +25,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
   final Set<String> _updatingOrderIds = <String>{};
   final Set<String> _printingOrderIds = <String>{};
   final Map<String, Map<String, dynamic>> _printStates = <String, Map<String, dynamic>>{};
+  bool _selfDelivery = false;
 
   @override
   void initState() {
@@ -121,9 +129,11 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
       });
     }
     try {
+      final store = await AuthService.instance.getCurrentStore();
       final orders = await OrdersRepository.instance.getOrders();
       if (!mounted) return;
       setState(() {
+        _selfDelivery = store?['self_delivery'] == true;
         _orders = orders;
         _error = null;
       });
@@ -372,6 +382,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
                             onPrint: () => _printOrder(order),
                             isPrinting: _printingOrderIds.contains(order['id']?.toString()),
                             printState: _printStates[order['id']?.toString()],
+                            allowStoreDelivery: _selfDelivery && !_isPickupOrder(order) && order['driver_id'] == null,
                           ),
                         ),
                       ),
@@ -782,6 +793,7 @@ class _OrderCard extends StatelessWidget {
     required this.onPrint,
     required this.isPrinting,
     required this.printState,
+    required this.allowStoreDelivery,
   });
 
   final Map<String, dynamic> order;
@@ -791,6 +803,7 @@ class _OrderCard extends StatelessWidget {
   final VoidCallback onPrint;
   final bool isPrinting;
   final Map<String, dynamic>? printState;
+  final bool allowStoreDelivery;
 
   double? _coordinate(List<String> keys) {
     for (final key in keys) {
@@ -1035,6 +1048,7 @@ class _OrderCard extends StatelessWidget {
                       onPrint: onPrint,
                       isPrinting: isPrinting,
                       hasPrinted: printState?['success'] == true,
+                      allowStoreDelivery: allowStoreDelivery,
                     ),
                   ] else
                     Row(
@@ -1060,6 +1074,7 @@ class _OrderCard extends StatelessWidget {
                           onPrint: onPrint,
                           isPrinting: isPrinting,
                           hasPrinted: printState?['success'] == true,
+                          allowStoreDelivery: allowStoreDelivery,
                         ),
                       ],
                     ),
@@ -1081,6 +1096,7 @@ class _OrderPrimaryActions extends StatelessWidget {
     required this.onPrint,
     required this.isPrinting,
     required this.hasPrinted,
+    required this.allowStoreDelivery,
   });
 
   final String status;
@@ -1089,6 +1105,7 @@ class _OrderPrimaryActions extends StatelessWidget {
   final VoidCallback onPrint;
   final bool isPrinting;
   final bool hasPrinted;
+  final bool allowStoreDelivery;
 
   @override
   Widget build(BuildContext context) {
@@ -1144,6 +1161,16 @@ class _OrderPrimaryActions extends StatelessWidget {
             label: Text(s.t('markReady')),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF0F9D68),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            ),
+          ),
+        if (status == 'ready' && allowStoreDelivery)
+          FilledButton.icon(
+            onPressed: isUpdating ? null : () => onStatusChanged('delivered'),
+            icon: const Icon(Icons.task_alt_rounded),
+            label: Text(_ordersLocalText(context, 'تم التسليم', 'گەیەندرا', 'Delivered')),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF2563EB),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
             ),
           ),
