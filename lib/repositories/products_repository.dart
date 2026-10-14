@@ -103,18 +103,61 @@ class ProductsRepository {
     return rows.map<String>((e) => e['shift_id'].toString()).toSet();
   }
 
+  // NOTE24 REVIEW ONLY: atomic server-side replacement. Requires the reviewed
+  // hala_replace_shift_links RPC to be installed on a staging database first.
   Future<void> setCategoryShifts({required String categoryId, required Set<String> selectedShiftIds, required Set<String> allShiftIds}) async {
-    await _client.from('store_category_shifts').delete().eq('category_id', categoryId);
-    if (allShiftIds.isEmpty || selectedShiftIds.length == allShiftIds.length) return;
-    if (selectedShiftIds.isEmpty) return;
-    await _client.from('store_category_shifts').insert(selectedShiftIds.map((id) => {'category_id': categoryId, 'shift_id': id}).toList());
+    await _replaceShiftLinks(entity: 'category', entityId: categoryId,
+      selectedShiftIds: selectedShiftIds, allShiftIds: allShiftIds);
   }
 
   Future<void> setProductShifts({required String productId, required Set<String> selectedShiftIds, required Set<String> allShiftIds}) async {
-    await _client.from('store_product_shifts').delete().eq('product_id', productId);
-    if (allShiftIds.isEmpty || selectedShiftIds.length == allShiftIds.length) return;
-    if (selectedShiftIds.isEmpty) return;
-    await _client.from('store_product_shifts').insert(selectedShiftIds.map((id) => {'product_id': productId, 'shift_id': id}).toList());
+    await _replaceShiftLinks(entity: 'product', entityId: productId,
+      selectedShiftIds: selectedShiftIds, allShiftIds: allShiftIds);
+  }
+
+  Future<void> _replaceShiftLinks({required String entity, required String entityId,
+    required Set<String> selectedShiftIds, required Set<String> allShiftIds}) async {
+    if (allShiftIds.isNotEmpty && selectedShiftIds.isEmpty) {
+      throw ArgumentError('At least one shift must be selected');
+    }
+    if (!allShiftIds.containsAll(selectedShiftIds)) {
+      throw ArgumentError('Selected shifts must belong to the active shift list');
+    }
+    await _client.rpc('hala_replace_shift_links', params: {
+      'p_entity': entity,
+      'p_entity_id': entityId,
+      'p_selected_shift_ids': selectedShiftIds.toList(),
+      'p_all_shift_ids': allShiftIds.toList(),
+    });
+  }
+
+  // NOTE24 REVIEW ONLY: category fields and shift links in one DB transaction.
+  // Requires hala_save_category_with_shifts on a staging database.
+  Future<Map<String, dynamic>> saveCategoryWithShifts({
+    String? id,
+    required String name,
+    required bool isActive,
+    String? imageUrl,
+    String? imagePath,
+    required Set<String> selectedShiftIds,
+    required Set<String> allShiftIds,
+  }) async {
+    if (allShiftIds.isEmpty || selectedShiftIds.isEmpty ||
+        !allShiftIds.containsAll(selectedShiftIds)) {
+      throw ArgumentError('Select valid active shifts');
+    }
+    final storeId = await _requireStoreId();
+    final result = await _client.rpc('hala_save_category_with_shifts', params: {
+      'p_store_id': storeId,
+      'p_category_id': id,
+      'p_name': name,
+      'p_is_active': isActive,
+      'p_image_url': imageUrl,
+      'p_image_path': imagePath,
+      'p_selected_shift_ids': selectedShiftIds.toList(),
+      'p_all_shift_ids': allShiftIds.toList(),
+    });
+    return Map<String, dynamic>.from(result as Map);
   }
 
   Future<List<Map<String, dynamic>>> getStoreCategories({bool activeOnly = false}) async {
@@ -160,6 +203,11 @@ class ProductsRepository {
     double minQuantity = 1,
     double quantityStep = 1,
     String catalogKind = 'restaurant',
+    Set<String>? selectedShiftIds,
+    Set<String>? allShiftIds,
+    int? unifiedPosition,
+    List<Map<String, dynamic>>? unifiedVariants,
+    List<String>? unifiedAddonIds,
   }) async {
     final storeId = await _requireStoreId();
     final cleanName = name.trim();
@@ -216,16 +264,56 @@ class ProductsRepository {
       'sort_order': null,
     };
 
-    if (productId == null || productId.isEmpty) {
-      return _client.from('products').insert(values).select().single();
+    // NOTE24 REVIEW ONLY: product fields + shift links in one database transaction.
+    // This path requires the accompanying staging-reviewed SQL RPC.
+    if (selectedShiftIds != null && allShiftIds != null) {
+      if (allShiftIds.isEmpty || selectedShiftIds.isEmpty ||
+          !allShiftIds.containsAll(selectedShiftIds)) {
+        throw ArgumentError('Invalid product shift selection');
+      }
+      // NOTE24 REVIEW ONLY: one RPC/transaction for the complete DB save.
+      // All three extra arguments must be present together; do not silently
+      // fall back to partial saves when the unified path is requested.
+      if (unifiedPosition != null && unifiedVariants != null && unifiedAddonIds != null) {
+        final result = await _client.rpc('hala_save_complete_product_v1', params: {
+          'p_store_id': storeId,
+          'p_product_id': productId,
+          'p_values': values,
+          'p_selected_shift_ids': selectedShiftIds.toList(),
+          'p_all_shift_ids': allShiftIds.toList(),
+          'p_position': unifiedPosition,
+          'p_variants': unifiedVariants,
+          'p_addon_ids': unifiedAddonIds.toSet().toList(),
+        });
+        return Map<String, dynamic>.from(result as Map);
+      }
+      if (unifiedPosition != null || unifiedVariants != null || unifiedAddonIds != null) {
+        throw ArgumentError('Incomplete unified product save payload');
+      }
+      final result = await _client.rpc('hala_save_product_with_shifts', params: {
+        'p_store_id': storeId,
+        'p_product_id': productId,
+        'p_values': values,
+        'p_selected_shift_ids': selectedShiftIds.toList(),
+        'p_all_shift_ids': allShiftIds.toList(),
+      });
+      return Map<String, dynamic>.from(result as Map);
     }
-    return _client
-        .from('products')
-        .update(values)
-        .eq('id', productId)
-        .eq('store_id', storeId)
-        .select()
-        .single();
+
+    // NOTE24 REVIEW ONLY: single-shift path also saves product, position,
+    // variants and add-ons in one database transaction. Requires SQL above.
+    if (unifiedPosition == null || unifiedVariants == null || unifiedAddonIds == null) {
+      throw StateError('Complete single-shift product payload is required');
+    }
+    final result = await _client.rpc('hala_save_complete_single_shift_product_v1', params: {
+      'p_store_id': storeId,
+      'p_product_id': productId,
+      'p_values': values,
+      'p_position': unifiedPosition,
+      'p_variants': unifiedVariants,
+      'p_addon_ids': unifiedAddonIds.toSet().toList(),
+    });
+    return Map<String, dynamic>.from(result as Map);
   }
 
   Future<Set<String>> getProductAddonIds(String productId) async {
@@ -244,33 +332,16 @@ class ProductsRepository {
     return data.map<String>((row) => row['addon_id'].toString()).toSet();
   }
 
+  // NOTE24: Replace links inside one database transaction. Requires the
+  // REVIEW_ONLY hala_replace_product_addons RPC to be reviewed and deployed
+  // separately before using this build. Never fall back to delete + insert.
   Future<void> setProductAddons(String productId, List<String> addonIds) async {
     final storeId = await _requireStoreId();
-    final product = await _client
-        .from('products')
-        .select('id')
-        .eq('id', productId)
-        .eq('store_id', storeId)
-        .maybeSingle();
-    if (product == null) throw StateError('Product does not belong to the current store');
-
-    final validAddonIds = <String>[];
-    if (addonIds.isNotEmpty) {
-      final rows = await _client
-          .from('product_addons')
-          .select('id')
-          .eq('store_id', storeId)
-          .inFilter('id', addonIds.toSet().toList());
-      validAddonIds.addAll(rows.map((e) => e['id'].toString()));
-    }
-
-    await _client.from('product_addon_links').delete().eq('product_id', productId);
-    if (validAddonIds.isEmpty) return;
-    await _client.from('product_addon_links').insert(
-      validAddonIds
-          .map((addonId) => {'product_id': productId, 'addon_id': addonId})
-          .toList(),
-    );
+    await _client.rpc('hala_replace_product_addons', params: {
+      'p_store_id': storeId,
+      'p_product_id': productId,
+      'p_addon_ids': addonIds.toSet().toList(),
+    });
   }
 
   Future<List<Map<String, dynamic>>> getProductVariants(String productId) async {
@@ -297,7 +368,7 @@ class ProductsRepository {
   }) async {
     final storeId = await _requireStoreId();
     await _client.rpc(
-      'store_replace_product_variants_v3',
+      'store_replace_product_variants_v4',
       params: {
         'p_store_id': storeId,
         'p_product_id': productId,

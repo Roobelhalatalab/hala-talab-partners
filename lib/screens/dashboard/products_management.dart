@@ -769,9 +769,12 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
 
   final _formKey=GlobalKey<FormState>();
   late final TextEditingController _name,_description,_price,_category,_position,_prep,_calories,_notes,_tags,_brand,_barcode,_sku,_stock,_sizeLabel,_weightValue,_minQuantity,_quantityStep;
-  late bool _available; bool _saving=false,_loadingAddons=true; PlatformFile? _selectedImage; String? _imageUrl,_imagePath; bool _removeImage=false; String? _saveError;
+  late bool _available; bool _saving=false,_loadingAddons=true,_catalogMetaReady=false; PlatformFile? _selectedImage; String? _imageUrl,_imagePath; bool _removeImage=false; String? _saveError;
   List<Map<String,dynamic>> _addons=const[], _categories=const[]; final Set<String> _selectedAddonIds={}; String _type='single'; String _unit='piece'; String _weightUnit='g'; bool _trackStock=false;
   static const String _packagesOnlyVariantName = '__hala_packages_only__';
+  String? _packagesOnlyVariantId;
+  // Snapshot of existing IDs/names: never reuse a historical name with a new ID.
+  final Map<String, String> _loadedVariantNamesById = <String, String>{};
   final List<_ProductVariantDraft> _variants = <_ProductVariantDraft>[];
   final List<_ProductPackageDraft> _standalonePackages = <_ProductPackageDraft>[];
   bool _useVariants = false;
@@ -814,6 +817,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
   @override void dispose(){for(final c in [_name,_description,_price,_category,_position,_prep,_calories,_notes,_tags,_brand,_barcode,_sku,_stock,_sizeLabel,_weightValue,_minQuantity,_quantityStep]){c.dispose();}for(final v in _variants){v.dispose();}for(final p in _standalonePackages){p.dispose();}super.dispose();}
 
   Future<void> _loadCatalogMeta() async {
+    if (mounted) setState(() { _loadingAddons = true; _catalogMetaReady = false; });
     try {
       final addons = await ProductsRepository.instance.getStoreAddons();
       final categories = await ProductsRepository.instance.getStoreCategories(activeOnly:true);
@@ -824,8 +828,9 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
       final assignedShiftIds = widget.product==null || shifts.isEmpty ? <String>{} : await ProductsRepository.instance.getProductShiftIds(widget.product!['id'].toString());
       var variants=const <Map<String,dynamic>>[];
       if(widget.product!=null){
-        try{variants=await ProductsRepository.instance.getProductVariants(widget.product!['id'].toString());}
-        catch(e,st){debugPrint('Stage 156 variants are not available yet: $e\n$st');}
+        // Never interpret a failed variant read as an empty list: that would
+        // hide every historical variant on the next unified save.
+        variants=await ProductsRepository.instance.getProductVariants(widget.product!['id'].toString());
       }
       if (mounted) {
         setState(() {
@@ -864,9 +869,16 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
         for(final old in _standalonePackages){old.dispose();}
         _variants.clear();
         _standalonePackages.clear();
-        final packagesOnly = variants.length == 1 && variants.first['name']?.toString() == _packagesOnlyVariantName;
+        _loadedVariantNamesById
+          ..clear()
+          ..addEntries(variants.where((v) => v['id'] != null).map((v) => MapEntry(v['id'].toString(), v['name']?.toString() ?? '')));
+        final packagesOnly = variants.where((v) => v['is_available'] != false).length == 1 &&
+            variants.any((v) => v['name']?.toString() == _packagesOnlyVariantName && v['is_available'] != false);
+        _packagesOnlyVariantId = null;
         if(packagesOnly){
-          final raw = variants.first['packages'];
+          final legacyVariant = variants.firstWhere((v) => v['name']?.toString() == _packagesOnlyVariantName && v['is_available'] != false);
+          _packagesOnlyVariantId = legacyVariant['id']?.toString();
+          final raw = legacyVariant['packages'];
           if(raw is List){
             _standalonePackages.addAll(raw.map((p)=>_ProductPackageDraft.fromMap(Map<String,dynamic>.from(p as Map))));
           }
@@ -874,6 +886,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
           _useVariants=false;
         }else{
           _variants.addAll(variants.map((v)=>_ProductVariantDraft(
+            id:v['id']?.toString(),
             name:v['name']?.toString()??'',
             price:((v['price'] as num?)??0).toDouble(),
             available:v['is_available']!=false,
@@ -885,9 +898,19 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
           _usePackagesOnly=false;
         }
         _loadingAddons=false;
+        _catalogMetaReady=true;
       });
       }
-    } catch(e,st){debugPrint('Product catalog metadata load failed: $e\n$st');if(mounted)setState(()=>_loadingAddons=false);}
+    } catch(e,st){
+      debugPrint('Product catalog metadata load failed: $e\n$st');
+      if (mounted) {
+        setState(() {
+        _loadingAddons=false;
+        _catalogMetaReady=false;
+        _saveError=_p55(context, 'تعذر تحميل بيانات المنتج والأنواع. لم تُحفظ أي تغييرات. أعد المحاولة.', 'زانیارییەکان بارنەکران؛ دووبارە هەوڵ بدەوە.', 'Product options failed to load. Nothing was saved. Retry.');
+        });
+      }
+    }
   }
 
   void _addVariant(){setState(()=>_variants.add(_ProductVariantDraft()));}
@@ -905,7 +928,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
         context:context,
         builder:(context)=>AlertDialog(
           title:Text(_p55(context,'حذف النوع؟','سڕینەوەی جۆر؟','Delete type?')),
-          content:Text(_p55(context,'سيتم حذف هذا النوع وعبواته من النموذج. لن يتأثر أي منتج آخر.','ئەم جۆرە و پاکەتەکانی لە فۆڕمەکە دەسڕدرێنەوە.','This type and its packages will be removed from the form. Other products are not affected.')),
+          content:Text(v.id != null ? _p55(context,'سيُزال النوع من قائمة البيع عند الحفظ، لكن يبقى سجله محفوظًا لحماية الطلبات القديمة. تگدر ترجعه لاحقًا من تعديل المنتج.','ئەم جۆرە لە لیستی فرۆشتن دەشاردرێتەوە، بەڵام مێژووی داواکارییەکان دەپارێزرێت.','This existing type will be hidden from sale after saving, but kept for past orders. You can restore it later.') : _p55(context,'سيتم إزالة النوع الجديد من النموذج قبل حفظه.','جۆرە نوێیەکە لە فۆڕمەکە دەسڕدرێتەوە.','The new type will be removed from the form before saving.')),
           actions:[
             TextButton(onPressed:()=>Navigator.pop(context,false),child:Text(_p55(context,'إلغاء','هەڵوەشاندنەوە','Cancel'))),
             FilledButton(onPressed:()=>Navigator.pop(context,true),child:Text(_p55(context,'حذف','سڕینەوە','Delete'))),
@@ -922,7 +945,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
   void _moveVariant(int from,int to){if(from<0||from>=_variants.length||to<0||to>=_variants.length)return;setState((){final item=_variants.removeAt(from);_variants.insert(to,item);});}
 
   Future<void> _pickVariantImage(_ProductVariantDraft variant) async {
-    final f=await pickPartnerPhotoFromGallery();
+    final f=await pickPartnerPhotoWithCamera(context);
     if(f==null)return;
     if(f.size>5*1024*1024||f.bytes==null){
       if(mounted){
@@ -1003,7 +1026,7 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     return null;
   }
   Future<void> _pickImage() async {
-    final f = await pickPartnerPhotoFromGallery();
+    final f = await pickPartnerPhotoWithCamera(context);
     if (f == null) return;
     if (f.size > 5 * 1024 * 1024 || f.bytes == null) {
       if (mounted) {
@@ -1036,11 +1059,35 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
   }
   Future<void> _save() async {
     if (_saving) return;
+    if (!_catalogMetaReady || _loadingAddons) {
+      if(mounted)setState(()=>_saveError=_p55(context, 'انتظر تحميل بيانات المنتج كاملة، أو أعد المحاولة.', 'چاوەڕێی بارکردنی زانیارییەکان بکە.', 'Wait for product data to load, or retry.'));
+      return;
+    }
     final name = _name.text.trim();
     final category = _category.text.trim();
     final categoryId = _selectedCategoryId;
     final parsedBasePrice = double.tryParse(_price.text.trim());
     final variantError = _validateVariants();
+    // The SQL v4 deliberately rejects reusing the name of an omitted historic
+    // variant. Explain this before uploading images or starting a DB save.
+    final submittedIds = <String>{
+      if (_usePackagesOnly && _packagesOnlyVariantId != null) _packagesOnlyVariantId!,
+      if (_useVariants) for (final v in _variants) if (v.id != null) v.id!,
+    };
+    final submittedNames = <String>{
+      if (_usePackagesOnly) _packagesOnlyVariantName.toLowerCase(),
+      if (_useVariants) for (final v in _variants) v.name.text.trim().toLowerCase(),
+    };
+    final historicalNameConflict = _loadedVariantNamesById.entries.any((e) =>
+        !submittedIds.contains(e.key) &&
+        submittedNames.contains(e.value.trim().toLowerCase()));
+    if (historicalNameConflict) {
+      setState(() => _saveError = _p55(context,
+          'اسم النوع مستخدم بنوع قديم محذوف من القائمة. غيّر اسم النوع الجديد أو أرجع النوع القديم بدل إنشاء نسخة ثانية.',
+          'ناوی جۆرەکە پێشتر بەکارهاتووە؛ ناوەکە بگۆڕە یان جۆرە کۆنەکە بگەڕێنەوە.',
+          'This name belongs to a historical type. Rename the new type or restore the original type.'));
+      return;
+    }
     final variantPrices = <double>[
       for (final variant in _variants)
         if (variant.packages.isNotEmpty)
@@ -1078,16 +1125,22 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
       var url = _removeImage ? null : _imageUrl;
       var path = _removeImage ? null : _imagePath;
 
+      // NOTE24: Never delete previously saved images before the database save
+      // and variant/add-on synchronization have all completed successfully.
+      final pendingOldImagePaths = <String>{};
       String? imageWarning;
       if (_selectedImage?.bytes != null) {
         try {
           final up = await ProductsRepository.instance.uploadProductImage(
             bytes: _selectedImage!.bytes!,
             extension: 'png',
-            oldPath: _imagePath,
+            // Old image is cleaned up only after the entire save succeeds.
           );
           url = up['url'];
           path = up['path'];
+          if ((_imagePath ?? '').isNotEmpty && _imagePath != path) {
+            pendingOldImagePaths.add(_imagePath!);
+          }
         } on StorageException catch (e) {
           // Stage 123: never block the core product record because Storage
           // rejected an optional image. Save the product first, then surface
@@ -1098,9 +1151,86 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
           path = _imagePath;
         }
       } else if (_removeImage && (_imagePath ?? '').isNotEmpty) {
-        await ProductsRepository.instance.removeProductImage(_imagePath);
+        pendingOldImagePaths.add(_imagePath!);
       }
 
+      Set<String>? productShiftIdsForSave;
+      Set<String>? allShiftIdsForSave;
+      if (_shiftMode == 2 && _shifts.isNotEmpty) {
+        Map<String, dynamic>? selectedCategory;
+        for (final c in _categories) {
+          if (c['id']?.toString() == categoryId) {
+            selectedCategory = c;
+            break;
+          }
+        }
+        // NOTE 24: Preserve the product's selected/existing explicit shift links.
+        // The category legacy shift_id must not silently overwrite those links.
+        // Atomic product+shift saving still requires a separately reviewed RPC.
+        final categoryShiftId = selectedCategory?['shift_id']?.toString();
+        final productShiftIds = _selectedShiftIds.isNotEmpty
+            ? Set<String>.from(_selectedShiftIds)
+            : ((categoryShiftId ?? '').isNotEmpty
+                ? <String>{categoryShiftId!}
+                : <String>{});
+        productShiftIdsForSave = productShiftIds;
+        allShiftIdsForSave = _shifts.map((e) => e['id'].toString()).toSet();
+      }
+
+      final variantPayload = <Map<String, dynamic>>[];
+      if(_usePackagesOnly){
+        final hasDefault=_standalonePackages.any((p)=>p.isDefault);
+        final packages=<Map<String,dynamic>>[for(var i=0;i<_standalonePackages.length;i++) _packagePayload(_standalonePackages[i],forceDefault:!hasDefault&&i==0)];
+        final fallbackPrice=packages.map((e)=>(e['price'] as num).toDouble()).reduce((a,b)=>a<b?a:b);
+        variantPayload.add({
+          if (_packagesOnlyVariantId != null) 'id': _packagesOnlyVariantId,
+          'name':_packagesOnlyVariantName,
+          'price':fallbackPrice,
+          'sort_order':1,
+          'is_available':true,
+          'image_url':null,
+          'image_path':null,
+          'packages':packages,
+        });
+      }else if (_useVariants) {
+        for (var i = 0; i < _variants.length; i++) {
+          final draft = _variants[i];
+          var variantImageUrl = draft.removeImage ? null : draft.imageUrl;
+          var variantImagePath = draft.removeImage ? null : draft.imagePath;
+          if (draft.selectedImage?.bytes != null) {
+            final up = await ProductsRepository.instance.uploadProductImage(
+              bytes: draft.selectedImage!.bytes!,
+              extension: draft.selectedImage!.extension ?? 'jpg',
+              // Delay deletion of the previously saved variant image.
+            );
+            variantImageUrl = up['url'];
+            variantImagePath = up['path'];
+            if ((draft.imagePath ?? '').isNotEmpty && draft.imagePath != variantImagePath) {
+              pendingOldImagePaths.add(draft.imagePath!);
+            }
+          } else if (draft.removeImage && (draft.imagePath ?? '').isNotEmpty) {
+            pendingOldImagePaths.add(draft.imagePath!);
+          }
+          final hasDefault=draft.packages.any((p)=>p.isDefault);
+          final packages=<Map<String,dynamic>>[for(var j=0;j<draft.packages.length;j++) _packagePayload(draft.packages[j],forceDefault:!hasDefault&&j==0)];
+          final fallbackPrice = packages.isNotEmpty
+              ? packages.map((e) => (e['price'] as num).toDouble()).reduce((a,b)=>a<b?a:b)
+              : double.parse(draft.price.text.trim());
+          variantPayload.add({
+            if (draft.id != null) 'id': draft.id,
+            'name': draft.name.text.trim(),
+            'price': fallbackPrice,
+            'sort_order': i + 1,
+            'is_available': draft.available,
+            'image_url': variantImageUrl,
+            'image_path': variantImagePath,
+            'packages': packages,
+          });
+        }
+      }
+      // NOTE24: Prepare/upload variant images before mutating the product row.
+      // A failed variant upload must not leave a newly saved product without
+      // its variants. Storage uploads themselves are not transactional.
       final saved = await ProductsRepository.instance.saveProduct(
         productId: widget.product?['id']?.toString(),
         name: name,
@@ -1128,94 +1258,29 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
         minQuantity: minQuantity,
         quantityStep: quantityStep,
         catalogKind: businessType,
+        selectedShiftIds: productShiftIdsForSave,
+        allShiftIds: allShiftIdsForSave,
+        // Shift-mode 2: product, ordering, variants/packages and add-ons
+        // commit or roll back together in the REVIEW_ONLY unified RPC.
+        unifiedPosition: desiredPosition ?? 999999,
+        unifiedVariants: variantPayload,
+        unifiedAddonIds: _selectedAddonIds.toList(),
       );
 
-      await ProductsRepository.instance.setProductPosition(
-        productId: saved['id'].toString(),
-        position: desiredPosition ?? 999999,
-      );
+      // Both shift modes now use a single database RPC in REVIEW_ONLY code.
+      // Image uploads/cleanup remain outside the database transaction.
 
-      if (_shiftMode == 2 && _shifts.isNotEmpty) {
-        Map<String, dynamic>? selectedCategory;
-        for (final c in _categories) {
-          if (c['id']?.toString() == categoryId) {
-            selectedCategory = c;
-            break;
-          }
-        }
-        final categoryShiftId = selectedCategory?['shift_id']?.toString();
-        final productShiftIds = (categoryShiftId ?? '').isNotEmpty ? <String>{categoryShiftId!} : _selectedShiftIds;
-        await ProductsRepository.instance.setProductShifts(
-          productId: saved['id'].toString(),
-          selectedShiftIds: productShiftIds,
-          allShiftIds: _shifts.map((e) => e['id'].toString()).toSet(),
-        );
-      }
-
-      final variantPayload = <Map<String, dynamic>>[];
-      if(_usePackagesOnly){
-        final hasDefault=_standalonePackages.any((p)=>p.isDefault);
-        final packages=<Map<String,dynamic>>[for(var i=0;i<_standalonePackages.length;i++) _packagePayload(_standalonePackages[i],forceDefault:!hasDefault&&i==0)];
-        final fallbackPrice=packages.map((e)=>(e['price'] as num).toDouble()).reduce((a,b)=>a<b?a:b);
-        variantPayload.add({
-          'name':_packagesOnlyVariantName,
-          'price':fallbackPrice,
-          'sort_order':1,
-          'is_available':true,
-          'image_url':null,
-          'image_path':null,
-          'packages':packages,
-        });
-      }else if (_useVariants) {
-        for (var i = 0; i < _variants.length; i++) {
-          final draft = _variants[i];
-          var variantImageUrl = draft.removeImage ? null : draft.imageUrl;
-          var variantImagePath = draft.removeImage ? null : draft.imagePath;
-          if (draft.selectedImage?.bytes != null) {
-            final up = await ProductsRepository.instance.uploadProductImage(
-              bytes: draft.selectedImage!.bytes!,
-              extension: draft.selectedImage!.extension ?? 'jpg',
-              oldPath: draft.imagePath,
-            );
-            variantImageUrl = up['url'];
-            variantImagePath = up['path'];
-          } else if (draft.removeImage && (draft.imagePath ?? '').isNotEmpty) {
-            await ProductsRepository.instance.removeProductImage(draft.imagePath);
-          }
-          final hasDefault=draft.packages.any((p)=>p.isDefault);
-          final packages=<Map<String,dynamic>>[for(var j=0;j<draft.packages.length;j++) _packagePayload(draft.packages[j],forceDefault:!hasDefault&&j==0)];
-          final fallbackPrice = packages.isNotEmpty
-              ? packages.map((e) => (e['price'] as num).toDouble()).reduce((a,b)=>a<b?a:b)
-              : double.parse(draft.price.text.trim());
-          variantPayload.add({
-            'name': draft.name.text.trim(),
-            'price': fallbackPrice,
-            'sort_order': i + 1,
-            'is_available': draft.available,
-            'image_url': variantImageUrl,
-            'image_path': variantImagePath,
-            'packages': packages,
-          });
-        }
-      }
-      await ProductsRepository.instance.replaceProductVariants(
-        productId: saved['id'].toString(),
-        variants: variantPayload,
-      );
-
-      // A new product with no selected add-ons should not perform an unnecessary
-      // link-table write. This keeps the core product save independent.
-      if (widget.product != null || _selectedAddonIds.isNotEmpty) {
-        try {
-          await ProductsRepository.instance.setProductAddons(
-            saved['id'].toString(),
-            _selectedAddonIds.toList(),
-          );
-        } catch (e) {
-          // The product itself is already saved. Do not keep the dialog stuck
-          // because an optional add-on sync failed.
-          debugPrint('Product add-on sync warning: $e');
-        }
+      // Database saves completed. Cleanup is best-effort; never turn a
+      // successful database save into an error because Storage is unavailable.
+      final referencedImagePaths = <String>{
+        if (path != null && path.isNotEmpty) path,
+        for (final variant in variantPayload)
+          if (variant['image_path'] is String &&
+              (variant['image_path'] as String).isNotEmpty)
+            variant['image_path'] as String,
+      };
+      for (final oldPath in pendingOldImagePaths.difference(referencedImagePaths)) {
+        await ProductsRepository.instance.removeProductImage(oldPath);
       }
 
       if (mounted) {
@@ -1254,10 +1319,24 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
     } on PostgrestException catch (e) {
       if (mounted) {
         final lower='${e.code ?? ''} ${e.message} ${e.details ?? ''}'.toLowerCase();
-        final stage155Missing=lower.contains('store_set_product_position_v6')||(lower.contains('store_replace_product_variants_v3')||lower.contains('store_replace_product_variants_v2'))||lower.contains('product_variants')||lower.contains('schema cache');
-        setState(() => _saveError = stage155Missing
-            ? _p55(context,'يلزم تشغيل Stage 200 في Supabase مرة واحدة لتفعيل فصل أقسام الشفتات والترتيب الجديد.','پێویستە Stage 200 لە Supabase جێبەجێ بکرێت.','Run the Stage 200 SQL in Supabase once to enable shift-scoped categories and the new ordering system.')
-            : e.message);
+        // NOTE24: A missing unified RPC must not be reported as a Stage 200 issue.
+        final note24RpcMissing = lower.contains('hala_save_complete_product_v1') ||
+            lower.contains('hala_save_product_with_shifts') ||
+            lower.contains('hala_replace_product_addons');
+        final stage155Missing = !note24RpcMissing &&
+            (lower.contains('store_set_product_position_v6') ||
+             lower.contains('store_replace_product_variants_v3') ||
+             lower.contains('store_replace_product_variants_v2') ||
+             lower.contains('product_variants') ||
+             lower.contains('schema cache'));
+        setState(() => _saveError = note24RpcMissing
+            ? _p55(context,
+                'تعذر حفظ المنتج: دوال الملاحظة 24 غير متوفرة أو غير مفعّلة. لا تشغّل أي SQL قبل مراجعتها واعتمادها.',
+                'نەتوانرا بەرهەم پاشەکەوت بکرێت: دوالی تێبینی 24 ئامادە نین.',
+                'Product save unavailable: Note 24 database functions are missing or not enabled. Review before deploying SQL.')
+            : stage155Missing
+                ? _p55(context,'يلزم مراجعة دوال ترتيب المنتجات والأحجام في Supabase قبل الحفظ.','پێویستە دوالی ڕیزکردن و جۆرەکان بپشکنرێن.','Review product ordering and variant functions in Supabase before saving.')
+                : e.message);
       }
     } on AuthException catch (e) {
       if (mounted) setState(() => _saveError = e.message);
@@ -1342,10 +1421,17 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
                       child: Text(_saveError!, style: const TextStyle(color: Color(0xFFB42318), fontWeight: FontWeight.w700)),
                     ),
                   ],
+                  if (!_catalogMetaReady && !_loadingAddons) ...[
+                    TextButton.icon(
+                      onPressed: _loadCatalogMeta,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text(_p55(context, 'إعادة تحميل بيانات المنتج', 'دووبارە بارکردنەوە', 'Retry loading product data')),
+                    ),
+                  ],
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: _saving ? null : _save,
+                      onPressed: (_saving || !_catalogMetaReady || _loadingAddons) ? null : _save,
                       icon: _saving
                           ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                           : const Icon(Icons.check_rounded),
@@ -1668,13 +1754,13 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
             ),
           );
           return Container(key:ValueKey(v),margin:const EdgeInsets.only(bottom:12),padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(16),border:Border.all(color:const Color(0xFFE4E7EC))),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-            Row(children:[Container(width:30,height:30,alignment:Alignment.center,decoration:BoxDecoration(color:const Color(0xFFFFF1E6),borderRadius:BorderRadius.circular(9)),child:Text('${i+1}',style:const TextStyle(fontWeight:FontWeight.w900,color:AppColors.orangeDark))),const SizedBox(width:8),Expanded(child:Text(_p55(context,'نوع ${i+1}','جۆری ${i+1}','Type ${i+1}'),style:const TextStyle(fontWeight:FontWeight.w900)))]),
+            Row(children:[Container(width:30,height:30,alignment:Alignment.center,decoration:BoxDecoration(color:const Color(0xFFFFF1E6),borderRadius:BorderRadius.circular(9)),child:Text('${i+1}',style:const TextStyle(fontWeight:FontWeight.w900,color:AppColors.orangeDark))),const SizedBox(width:8),Expanded(child:Text(_p55(context,'نوع ${i+1}','جۆری ${i+1}','Type ${i+1}'),style:const TextStyle(fontWeight:FontWeight.w900))),if(v.id!=null&&!v.available)Text(_p55(context,'مخفي — يمكن إرجاعه','شاراوە','Hidden — can restore'),style:const TextStyle(fontSize:11,fontWeight:FontWeight.w800,color:Colors.deepOrange))]),
             const SizedBox(height:10),
             LayoutBuilder(builder:(context,c){final nameField=TextField(controller:v.name,decoration:InputDecoration(labelText:_p55(context,'اسم النوع *','ناوی جۆر *','Type name *'),hintText:_p55(context,'مثال: رز عنبر','نموونە: جۆری 1','Example: Amber rice'),border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));final priceField=TextField(controller:v.price,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:_p55(context,'سعر النوع (إذا بدون عبوات)','نرخی جۆر','Type price (when no packages)'),suffixText:'د.ع',border:OutlineInputBorder(borderRadius:BorderRadius.circular(12))));if(c.maxWidth<620)return Column(children:[Row(children:[imageBox(),const SizedBox(width:10),Expanded(child:nameField)]),const SizedBox(height:10),priceField]);return Row(children:[imageBox(),const SizedBox(width:10),Expanded(child:nameField),const SizedBox(width:10),Expanded(child:priceField)]);}),
             if(v.selectedImage!=null||(v.imageUrl??'').isNotEmpty)Align(alignment:AlignmentDirectional.centerStart,child:TextButton.icon(onPressed:()=>setState((){v.selectedImage=null;v.imageUrl=null;v.removeImage=true;}),icon:const Icon(Icons.delete_outline,color:Colors.red),label:Text(_p55(context,'إزالة صورة النوع','سڕینەوەی وێنە','Remove type image'),style:const TextStyle(color:Colors.red)))),
             const SizedBox(height:6),
             ExpansionTile(tilePadding:EdgeInsets.zero,childrenPadding:EdgeInsets.zero,title:Text(_p55(context,'عبوات/أوزان هذا النوع','پاکەتەکانی ئەم جۆرە','Packages/weights for this type'),style:const TextStyle(fontWeight:FontWeight.w900)),subtitle:Text(v.packages.isEmpty?_p55(context,'اختياري — اتركها فارغة إذا للنوع سعر واحد','ئارەزوومەندانە','Optional — leave empty for one type price'):_p55(context,'${v.packages.length} خيارات','${v.packages.length} هەڵبژاردە','${v.packages.length} options')),children:[_packageEditor(v.packages,addPackage:()=>setState(()=>v.addPackage()),removePackage:(index)=>setState(()=>v.removePackage(index)))]),
-            Row(children:[Expanded(child:SwitchListTile.adaptive(contentPadding:EdgeInsets.zero,dense:true,value:v.available,onChanged:(x)=>setState(()=>v.available=x),activeThumbColor:AppColors.orange,title:Text(_p55(context,'متاح','بەردەست','Available'),style:const TextStyle(fontWeight:FontWeight.w800)))),IconButton(tooltip:_p55(context,'للأعلى','بۆ سەرەوە','Move up'),onPressed:i>0?()=>_moveVariant(i,i-1):null,icon:const Icon(Icons.arrow_upward_rounded)),IconButton(tooltip:_p55(context,'للأسفل','بۆ خوارەوە','Move down'),onPressed:i<_variants.length-1?()=>_moveVariant(i,i+1):null,icon:const Icon(Icons.arrow_downward_rounded)),IconButton(tooltip:_p55(context,'حذف','سڕینەوە','Delete'),onPressed:()=>_removeVariant(i),icon:const Icon(Icons.delete_outline_rounded,color:Colors.red))]),
+            Row(children:[Expanded(child:SwitchListTile.adaptive(contentPadding:EdgeInsets.zero,dense:true,value:v.available,onChanged:(x)=>setState(()=>v.available=x),activeThumbColor:AppColors.orange,title:Text(_p55(context,'متاح للزبون (فعّل لإرجاع النوع المخفي)','بەردەست بۆ کڕیار','Available to customers (turn on to restore)'),style:const TextStyle(fontWeight:FontWeight.w800)))),IconButton(tooltip:_p55(context,'للأعلى','بۆ سەرەوە','Move up'),onPressed:i>0?()=>_moveVariant(i,i-1):null,icon:const Icon(Icons.arrow_upward_rounded)),IconButton(tooltip:_p55(context,'للأسفل','بۆ خوارەوە','Move down'),onPressed:i<_variants.length-1?()=>_moveVariant(i,i+1):null,icon:const Icon(Icons.arrow_downward_rounded)),IconButton(tooltip:_p55(context,'حذف','سڕینەوە','Delete'),onPressed:()=>_removeVariant(i),icon:const Icon(Icons.delete_outline_rounded,color:Colors.red))]),
           ]));
         }),
         Align(alignment:AlignmentDirectional.centerStart,child:OutlinedButton.icon(onPressed:_addVariant,icon:const Icon(Icons.add_rounded),label:Text(_p55(context,'إضافة نوع','زیادکردنی جۆر','Add type')))),
@@ -1687,10 +1773,11 @@ class _ProductWizardDialogState extends State<_ProductWizardDialog> {
 }
 
 class _ProductVariantDraft {
-  _ProductVariantDraft({String name='', double? price, this.available=true, this.imageUrl, this.imagePath, List<Map<String,dynamic>> packages=const []})
+  _ProductVariantDraft({this.id, String name='', double? price, this.available=true, this.imageUrl, this.imagePath, List<Map<String,dynamic>> packages=const []})
       : name=TextEditingController(text:name),
         price=TextEditingController(text:price==null?'':price.toStringAsFixed(price.truncateToDouble()==price?0:2)),
         packages=packages.map((p)=>_ProductPackageDraft.fromMap(p)).toList();
+  final String? id; // Existing variant UUID; omitted for new variants/copies.
   final TextEditingController name;
   final TextEditingController price;
   bool available;

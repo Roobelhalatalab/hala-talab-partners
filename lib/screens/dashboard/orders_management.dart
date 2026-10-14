@@ -208,10 +208,8 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
     switch (_filter) {
       case 'pending':
         return status == 'pending';
-      case 'preparing':
-        return const ['accepted', 'preparing'].contains(status);
-      case 'ready':
-        return const ['ready', 'assigned', 'picked_up'].contains(status);
+            case 'ready':
+        return const ['accepted', 'preparing', 'ready', 'assigned', 'picked_up'].contains(status);
       case 'delivered':
         return status == 'delivered';
       case 'cancelled':
@@ -273,7 +271,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
       });
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(s.t('orderUpdated'))));
-      if (status == 'preparing') {
+      if (status == 'ready' && order['status'] == 'pending') {
         final printerSettings = await ReceiptPrinterService.instance.loadSettings();
         if (printerSettings.autoPrintAfterAccept) {
           final currentOrder = <String, dynamic>{...order, ...updated, 'status': status};
@@ -307,8 +305,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
     final s = AppStrings.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final pendingCount = _countFor('pending');
-    final preparingCount = _countFor('preparing');
-    final readyCount = _countFor('ready');
+        final readyCount = _countFor('ready');
     final deliveredCount = _countFor('delivered');
     final cancelledCount = _countFor('cancelled');
 
@@ -339,8 +336,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
                     _OrderStageStrip(
                       selected: _filter,
                       pendingCount: pendingCount,
-                      preparingCount: preparingCount,
-                      readyCount: readyCount,
+                                            readyCount: readyCount,
                       deliveredCount: deliveredCount,
                       onSelected: (value) => setState(() => _filter = value),
                     ),
@@ -463,16 +459,14 @@ class _OrderStageStrip extends StatelessWidget {
   const _OrderStageStrip({
     required this.selected,
     required this.pendingCount,
-    required this.preparingCount,
-    required this.readyCount,
+        required this.readyCount,
     required this.deliveredCount,
     required this.onSelected,
   });
 
   final String selected;
   final int pendingCount;
-  final int preparingCount;
-  final int readyCount;
+    final int readyCount;
   final int deliveredCount;
   final ValueChanged<String> onSelected;
 
@@ -486,13 +480,6 @@ class _OrderStageStrip extends StatelessWidget {
         count: pendingCount,
         icon: Icons.notifications_active_outlined,
         color: AppColors.orange,
-      ),
-      _StageData(
-        value: 'preparing',
-        label: s.t('inProgressOrders'),
-        count: preparingCount,
-        icon: Icons.soup_kitchen_rounded,
-        color: const Color(0xFFF59E0B),
       ),
       _StageData(
         value: 'ready',
@@ -830,12 +817,12 @@ class _OrderCard extends StatelessWidget {
 
     bool opened = false;
     if (latitude != null && longitude != null) {
-      opened = await MapsService.instance.openDirectionsToCoordinates(
+      opened = await MapsService.instance.openWazeNavigationCoordinates(
         latitude: latitude,
         longitude: longitude,
       );
     } else if (address.isNotEmpty && address != '-') {
-      opened = await MapsService.instance.openDirectionsToAddress(address);
+      opened = await MapsService.instance.openWazeNavigationAddress(address);
     }
 
     if (!context.mounted || opened) return;
@@ -1021,7 +1008,7 @@ class _OrderCard extends StatelessWidget {
                     SizedBox(height: compact ? 9 : 9),
                     _OrderItemsPreview(items: items),
                   ],
-                  if (printState != null && const ['accepted', 'preparing'].contains(status)) ...[
+                  if (printState != null && const ['accepted', 'preparing', 'ready'].contains(status)) ...[
                     const SizedBox(height: 8),
                     _OrderPrintStateBadge(state: printState!),
                   ],
@@ -1132,7 +1119,7 @@ class _OrderPrimaryActions extends StatelessWidget {
             ),
           ),
           FilledButton.icon(
-            onPressed: isUpdating ? null : () => onStatusChanged('preparing'),
+            onPressed: isUpdating ? null : () => onStatusChanged('ready'),
             icon: const Icon(Icons.check_rounded),
             label: Text(s.t('acceptOrder')),
             style: FilledButton.styleFrom(
@@ -1141,7 +1128,7 @@ class _OrderPrimaryActions extends StatelessWidget {
             ),
           ),
         ],
-        if (const ['accepted', 'preparing'].contains(status))
+        if (const ['accepted', 'preparing', 'ready'].contains(status))
           OutlinedButton.icon(
             onPressed: isPrinting ? null : onPrint,
             icon: isPrinting
@@ -1152,16 +1139,6 @@ class _OrderPrimaryActions extends StatelessWidget {
               foregroundColor: const Color(0xFF0F766E),
               side: const BorderSide(color: Color(0xFF99D5CD)),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            ),
-          ),
-        if (status == 'preparing')
-          FilledButton.icon(
-            onPressed: isUpdating ? null : () => onStatusChanged('ready'),
-            icon: const Icon(Icons.inventory_2_outlined),
-            label: Text(s.t('markReady')),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF0F9D68),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
             ),
           ),
         if (status == 'ready' && allowStoreDelivery)
@@ -1524,12 +1501,12 @@ class _OrderDetailsDialog extends StatelessWidget {
 
     bool opened = false;
     if (latitude != null && longitude != null) {
-      opened = await MapsService.instance.openDirectionsToCoordinates(
+      opened = await MapsService.instance.openWazeNavigationCoordinates(
         latitude: latitude,
         longitude: longitude,
       );
     } else if (address.isNotEmpty && address != '-') {
-      opened = await MapsService.instance.openDirectionsToAddress(address);
+      opened = await MapsService.instance.openWazeNavigationAddress(address);
     }
 
     if (!context.mounted || opened) return;

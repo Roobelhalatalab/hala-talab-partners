@@ -74,6 +74,26 @@ class StoreOperationsRepository {
         .single();
   }
 
+  // Note 24: menu mode is independent from working hours and shift count.
+  Future<void> saveMenuMode(String menuMode) async {
+    if (menuMode != 'unified' && menuMode != 'different') {
+      throw ArgumentError.value(menuMode, 'menuMode');
+    }
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw const AuthException('User is not signed in');
+    final store = await getCurrentStore();
+    final storeId = store?['id']?.toString();
+    if (storeId == null || storeId.isEmpty) throw const AuthException('Store is not configured');
+    final updated = await _client.from('stores')
+        .update({'menu_mode': menuMode})
+        .eq('id', storeId)
+        .eq('owner_id', userId)
+        .select('id, menu_mode');
+    if (updated.isEmpty || updated.first['menu_mode'] != menuMode) {
+      throw StateError('Menu mode was not saved. Check store update permissions.');
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getStoreShifts() async {
     final store = await getCurrentStore();
     final storeId = store?['id']?.toString();

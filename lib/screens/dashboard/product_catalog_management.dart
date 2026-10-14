@@ -107,18 +107,32 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
     int shiftMode = _shiftMode;
     List<Map<String, dynamic>> shifts = List<Map<String, dynamic>>.from(_shifts);
     String? categoryShiftId = item?['shift_id']?.toString();
+    final selectedCategoryShiftIds = <String>{};
     if (widget.mode == _StoreManagerMode.categories && shiftMode == 2 && shifts.isNotEmpty) {
-      categoryShiftId ??= _activeShiftId ?? shifts.first['id']?.toString();
-      // Legacy Stage 199 rows may only have the link table populated. Promote
-      // a single old assignment in the dialog until Stage 200 migration is run.
-      if (item != null && (categoryShiftId ?? '').isEmpty) {
+      final validShiftIds = shifts.map((e) => e['id'].toString()).toSet();
+      if (item != null) {
         try {
-          final assigned = await ProductsRepository.instance.getCategoryShiftIds(item['id'].toString());
-          if (assigned.length == 1) categoryShiftId = assigned.first;
+          final linked = await ProductsRepository.instance.getCategoryShiftIds(item['id'].toString());
+          // No explicit links means all shifts in the existing catalog contract.
+          selectedCategoryShiftIds.addAll(linked.isEmpty ? validShiftIds : linked.intersection(validShiftIds));
         } catch (e, st) {
-          debugPrint('Category shift fallback unavailable: $e\n$st');
+          // Never silently overwrite unknown existing links after a read failure.
+          debugPrint('Cannot load category shift assignments: $e\n$st');
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_p55(context, 'تعذر قراءة شفتات القسم؛ لم تُفتح نافذة التعديل لحماية البيانات', 'نەتوانرا شیفتەکان بخوێندرێنەوە', 'Cannot read category shifts; edit cancelled to protect assignments'))));
+          name.dispose(); price.dispose(); order.dispose();
+          return;
+        }
+      } else {
+        final initial = _activeShiftId ?? shifts.first['id']?.toString();
+        if (initial != null && validShiftIds.contains(initial)) selectedCategoryShiftIds.add(initial);
+      }
+      if (selectedCategoryShiftIds.isEmpty && validShiftIds.isNotEmpty) {
+        // Existing legacy shift_id is a fallback only if no link matches.
+        if (categoryShiftId != null && validShiftIds.contains(categoryShiftId)) {
+          selectedCategoryShiftIds.add(categoryShiftId);
         }
       }
+      categoryShiftId = selectedCategoryShiftIds.isEmpty ? null : selectedCategoryShiftIds.first;
     }
 
     if (widget.mode == _StoreManagerMode.categories) {
@@ -129,7 +143,7 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
     }
 
     Future<void> pickCategoryImage(StateSetter setLocal) async {
-      final file = await pickPartnerPhotoFromGallery();
+      final file = await pickPartnerPhotoWithCamera(context);
       if (!mounted || file == null) return;
       if (file.bytes == null || file.size > 5 * 1024 * 1024) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_p55(context, 'الصورة يجب أن تكون أقل من 5MB', 'وێنەکە دەبێت کەمتر لە 5MB بێت', 'Image must be under 5MB'))));
@@ -214,7 +228,7 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
         ],
         if (widget.mode == _StoreManagerMode.categories && shiftMode == 2 && shifts.length >= 2) ...[
           const SizedBox(height: 12),
-          Align(alignment: AlignmentDirectional.centerStart, child: Text(_p55(context, 'شفت هذا القسم', 'شیفتی ئەم بەشە', 'Category shift'), style: const TextStyle(fontWeight: FontWeight.w900))),
+          Align(alignment: AlignmentDirectional.centerStart, child: Text(_p55(context, 'شفتات هذا القسم', 'شیفتەکانی ئەم بەشە', 'Category shifts'), style: const TextStyle(fontWeight: FontWeight.w900))),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -225,14 +239,21 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
               final label = code == 'morning' ? _p55(context, 'الصباحي', 'بەیانی', 'Morning') : _p55(context, 'المسائي', 'ئێوارە', 'Evening');
               return ChoiceChip(
                 label: Text(label),
-                selected: categoryShiftId == id,
-                onSelected: (_) => setLocal(() => categoryShiftId = id),
+                selected: selectedCategoryShiftIds.contains(id),
+                onSelected: (selected) => setLocal(() {
+                  if (selected) {
+                    selectedCategoryShiftIds.add(id);
+                  } else if (selectedCategoryShiftIds.length > 1) {
+                    selectedCategoryShiftIds.remove(id);
+                  }
+                  categoryShiftId = selectedCategoryShiftIds.isEmpty ? null : selectedCategoryShiftIds.first;
+                }),
                 selectedColor: const Color(0xFFFFE7D3),
               );
             }).toList(),
           ),
           const SizedBox(height: 6),
-          Text(_p55(context, 'كل شفت يملك أقسامه المستقلة، ويمكن تكرار اسم القسم في شفت آخر.', 'هەر شیفتێک بەشە تایبەتەکانی خۆی هەیە.', 'Each shift has independent categories; the same name may be reused in another shift.'), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+          Text(_p55(context, 'تقدر تختار شفت واحد أو الاثنين؛ يجب اختيار شفت واحد على الأقل.', 'دەتوانیت یەک یان هەردوو شیفت هەڵبژێریت.', 'Select one or both shifts; at least one is required.'), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
         ],
         if (widget.mode == _StoreManagerMode.addons) ...[const SizedBox(height: 12), TextField(controller: price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: s.t('addonPrice')))],
         const SizedBox(height: 8), SwitchListTile.adaptive(contentPadding: EdgeInsets.zero, value: active, onChanged: (v) => setLocal(() => active = v), title: Text(s.t('activeItem'))),
@@ -247,6 +268,10 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
     await Future<void>.delayed(const Duration(milliseconds: 120));
     name.dispose(); price.dispose(); order.dispose();
     if (!mounted || saved != true || nameValue.isEmpty) return;
+    if (widget.mode == _StoreManagerMode.categories && shiftMode == 2 && shifts.isNotEmpty && selectedCategoryShiftIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_p55(context, 'اختر شفتًا واحدًا على الأقل', 'لانیکەم یەک شیفت هەڵبژێرە', 'Select at least one shift'))));
+      return;
+    }
 
     // Optimistic UI: keep the manager visible and show the saved text
     // immediately while Storage/Supabase finish in the background. If the
@@ -296,23 +321,26 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
         payload['shift_id'] = shiftMode == 2 ? categoryShiftId : null;
       }
       if (widget.mode == _StoreManagerMode.addons) payload['price'] = double.tryParse(priceValue.replaceAll(',', '.')) ?? 0;
-      final savedRecord = await ProductsRepository.instance.saveStoreRecord(
-        table: _table,
-        payload: payload,
-        id: item?['id']?.toString(),
-      );
+      final savedRecord = widget.mode == _StoreManagerMode.categories && shiftMode == 2 && shifts.isNotEmpty
+          ? await ProductsRepository.instance.saveCategoryWithShifts(
+              id: item?['id']?.toString(),
+              name: nameValue,
+              isActive: active,
+              imageUrl: payload['image_url']?.toString(),
+              imagePath: payload['image_path']?.toString(),
+              selectedShiftIds: selectedCategoryShiftIds,
+              allShiftIds: shifts.map((e) => e['id'].toString()).toSet(),
+            )
+          : await ProductsRepository.instance.saveStoreRecord(
+              table: _table,
+              payload: payload,
+              id: item?['id']?.toString(),
+            );
       if (widget.mode == _StoreManagerMode.categories) {
         final requested = int.tryParse(orderValue);
         final categoryId = savedRecord?['id']?.toString() ?? item?['id']?.toString();
         if (requested != null && requested > 0 && categoryId != null && categoryId.isNotEmpty) {
           await ProductsRepository.instance.setCategoryPosition(categoryId: categoryId, position: requested);
-        }
-        if (shiftMode == 2 && categoryId != null && categoryId.isNotEmpty && shifts.isNotEmpty && categoryShiftId != null) {
-          await ProductsRepository.instance.setCategoryShifts(
-            categoryId: categoryId,
-            selectedShiftIds: {categoryShiftId!},
-            allShiftIds: shifts.map((e) => e['id'].toString()).toSet(),
-          );
         }
       }
 
@@ -370,6 +398,13 @@ class _StoreSimpleRecordsPageState extends State<_StoreSimpleRecordsPage> {
           setState(() => _items = previousItems);
         }
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+      // NOTE24 REVIEW ONLY: a previous database write may already have succeeded
+      // before a later shift-link/order write failed. Reconcile the UI with the
+      // authoritative server state instead of leaving a stale optimistic rollback.
+      // This is a visibility safeguard, NOT an atomicity fix.
+      if (widget.mode == _StoreManagerMode.categories && mounted) {
+        await _load(showLoading: false);
       }
     }
   }

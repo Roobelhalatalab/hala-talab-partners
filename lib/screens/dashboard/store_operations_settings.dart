@@ -26,6 +26,7 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
   bool _selfDelivery = false;
   bool _alwaysOpen = false;
   int _shiftMode = 1;
+  String _menuMode = 'different';
   String _morningStart = '08:00';
   String _morningEnd = '15:00';
   String _eveningStart = '15:00';
@@ -75,6 +76,7 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
     _alwaysOpen = store['always_open'] == true;
     _isOpen = _alwaysOpen || store['is_open'] == true;
     _shiftMode = (store['shift_mode'] as num?)?.toInt() == 2 ? 2 : 1;
+    _menuMode = store['menu_mode'] == 'unified' ? 'unified' : 'different';
 
     final rawHours = store['working_hours'];
     final hours = rawHours is Map ? Map<String, dynamic>.from(rawHours) : const <String, dynamic>{};
@@ -130,6 +132,7 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
     _alwaysOpen = store['always_open'] == true;
     _isOpen = _alwaysOpen || store['is_open'] == true;
     _shiftMode = (store['shift_mode'] as num?)?.toInt() == 2 ? 2 : 1;
+    _menuMode = store['menu_mode'] == 'unified' ? 'unified' : 'different';
     final rawHours = store['working_hours'];
     final hours = rawHours is Map ? Map<String, dynamic>.from(rawHours) : const <String, dynamic>{};
     for (final key in _dayKeys) {
@@ -456,6 +459,10 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
         selfDelivery: _selfDelivery,
         alwaysOpen: _alwaysOpen,
       );
+      if (_shiftMode == 2) {
+        await StoreOperationsRepository.instance.saveMenuMode(_menuMode);
+      }
+      updated['menu_mode'] = _menuMode;
       updated['shift_mode'] = _shiftMode;
       updated['self_delivery'] = _selfDelivery;
       updated['always_open'] = _alwaysOpen;
@@ -895,7 +902,7 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
 
   Widget _shiftSettingsCard(bool compact) => _card(
     title: _tx('نظام الشفتات', 'سیستەمی شیفت', 'Shift system'),
-    subtitle: _tx('إذا عندك منيو صباحي ومسائي فعّل شفتين. إذا عندك منيو واحد اترك شفت واحد.', 'ئەگەر دوو منیو هەیە دوو شیفت هەڵبژێرە.', 'Choose two shifts only when the store has separate morning and evening menus.'),
+    subtitle: _tx('حدد عدد الشفتات بشكل مستقل عن نوع المنيو.', 'ژمارەی شیفتەکان بە جیا دیاری بکە.', 'Choose the number of shifts independently of the menu type.'),
     icon: Icons.schedule_rounded,
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       SegmentedButton<int>(
@@ -907,6 +914,22 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
         onSelectionChanged: (value) => setState(() => _shiftMode = value.first),
       ),
       if (_shiftMode == 2) ...[
+        const SizedBox(height: 12),
+        Text(_tx('نوع المنيو للشفتين', 'جۆری منیو بۆ دوو شیفت', 'Menu type for both shifts'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: [
+            ButtonSegment(value: 'unified', label: Text(_tx('منيو موحّد', 'مینیوی یەکگرتوو', 'Unified menu'))),
+            ButtonSegment(value: 'different', label: Text(_tx('منيو مختلف', 'مینیوی جیاواز', 'Separate menus'))),
+          ],
+          selected: {_menuMode},
+          onSelectionChanged: (value) => setState(() => _menuMode = value.first),
+        ),
+        const SizedBox(height: 8),
+        Text(_menuMode == 'unified'
+          ? _tx('كل الأصناف المتاحة تظهر بالشفتين، مع احترام أوقات كل شفت.', 'هەموو بەرهەمەکان لە هەردوو شیفتدا پیشان دەدرێن.', 'All available items appear in both shifts; working hours stay separate.')
+          : _tx('كل شفت يعرض الأصناف والأقسام المرتبطة به فقط.', 'هەر شیفت بەرهەمە تایبەتەکانی خۆی پیشان دەدات.', 'Each shift shows only its assigned items and categories.'),
+          style: const TextStyle(color: AppColors.muted, fontSize: 12)),
         const SizedBox(height: 12),
         Text(_tx('لكل شفت جدول أسبوعي مستقل بالأسفل. يمكن تشغيل شفت واحد فقط في يوم معيّن، أو تشغيل الاثنين بأوقات غير متداخلة.', 'هەر شیفتێک خشتەی هەفتانەی جیاواز هەیە.', 'Each shift has its own weekly schedule below. You can run one or both shifts on a day as long as their times do not overlap.'), style: const TextStyle(color: AppColors.muted, fontSize: 12, height: 1.4)),
       ],

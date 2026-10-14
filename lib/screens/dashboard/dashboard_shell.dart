@@ -19,6 +19,31 @@ class _AccountHomeScreen extends StatefulWidget {
 }
 
 class _AccountHomeScreenState extends State<_AccountHomeScreen> {
+  static const MethodChannel _orderAlarm = MethodChannel('com.halatalab.partners/order_alarm');
+  final Set<String> _recentAlarmOrderIds = <String>{};
+
+  Future<void> _stopOrderAlarm() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try { await _orderAlarm.invokeMethod<void>('stop'); } catch (_) {}
+  }
+
+  Future<void> _ringForNewOrder(Map<String, dynamic> order) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final orderId = order['id']?.toString() ?? '';
+    if (orderId.isEmpty || !_recentAlarmOrderIds.add(orderId)) return;
+    // Avoid unbounded in-memory IDs over long merchant sessions.
+    if (_recentAlarmOrderIds.length > 100) _recentAlarmOrderIds.clear();
+    try {
+      // Respect the store's existing notification switches.
+      final currentStore = await AuthService.instance.getCurrentStore();
+      if (!mounted) return;
+      final raw = currentStore?['order_notification_settings'];
+      final settings = raw is Map ? raw : const <String, dynamic>{};
+      if (settings['new_orders'] == false || settings['sound'] == false) return;
+      await _orderAlarm.invokeMethod<void>('start');
+    } catch (_) { /* Realtime and normal push must never fail due to audio. */ }
+  }
+
   int _selectedIndex = 0;
   final List<int> _navigationHistory = <int>[];
   late Map<String, dynamic>? _store;
@@ -39,6 +64,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> {
   @override
   void dispose() {
     _notificationsTimer?.cancel();
+    unawaited(_stopOrderAlarm());
     final channel = _notificationsChannel;
     if (channel != null) {
       Supabase.instance.client.removeChannel(channel);
@@ -49,6 +75,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> {
 
   void _selectIndex(int index, {bool remember = true}) {
     if (index == _selectedIndex) return;
+    if (index == 1) unawaited(_stopOrderAlarm());
     setState(() {
       if (remember) {
         _navigationHistory.remove(index);
@@ -82,6 +109,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> {
             callback: (payload) {
               if (!mounted) return;
               final record = Map<String, dynamic>.from(payload.newRecord);
+              unawaited(_ringForNewOrder(record));
               final s = AppStrings.of(context);
               final number = record['order_number']?.toString() ?? '';
               final total = record['total']?.toString() ?? '';

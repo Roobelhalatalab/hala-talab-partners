@@ -108,7 +108,7 @@ class OnlinePresenceService with WidgetsBindingObserver {
           await channel.track({
             'user_id': userId,
             'role': role,
-            'platform': 'ios',
+            'platform': 'android',
             'online_at': DateTime.now().toUtc().toIso8601String(),
           });
         } catch (trackError, stackTrace) {

@@ -35,7 +35,24 @@ class PersistentNetworkImage extends StatefulWidget {
 }
 
 class _PersistentNetworkImageState extends State<PersistentNetworkImage> {
+  // Bound RAM usage: full-size photos must not accumulate indefinitely.
+  // Insertion-ordered map doubles as a small LRU; disk cache stays intact.
+  static const int _maxMemoryBytes = 24 * 1024 * 1024;
+  static const int _maxMemoryEntries = 80;
   static final Map<String, Uint8List> _memory = <String, Uint8List>{};
+  static int _memoryBytes = 0;
+
+  static void _remember(String url, Uint8List bytes) {
+    final previous = _memory.remove(url);
+    if (previous != null) _memoryBytes -= previous.lengthInBytes;
+    if (bytes.lengthInBytes > _maxMemoryBytes) return;
+    _memory[url] = bytes;
+    _memoryBytes += bytes.lengthInBytes;
+    while (_memoryBytes > _maxMemoryBytes || _memory.length > _maxMemoryEntries) {
+      final oldest = _memory.keys.first;
+      _memoryBytes -= _memory.remove(oldest)!.lengthInBytes;
+    }
+  }
   static final Map<String, Future<Uint8List>> _inFlight = <String, Future<Uint8List>>{};
 
   Uint8List? _bytes;
@@ -55,7 +72,10 @@ class _PersistentNetworkImageState extends State<PersistentNetworkImage> {
 
   Future<void> _load() async {
     final url = widget.url.trim();
-    if (url.isEmpty) return;
+    if (url.isEmpty) {
+      if (mounted) setState(() { _bytes = null; _error = null; });
+      return;
+    }
 
     final memory = _memory[url];
     if (memory != null) {
@@ -68,7 +88,7 @@ class _PersistentNetworkImageState extends State<PersistentNetworkImage> {
       final future = _inFlight.putIfAbsent(url, () => _readOrDownload(url));
       final bytes = await future;
       _inFlight.remove(url);
-      _memory[url] = bytes;
+      _remember(url, bytes);
       if (mounted && widget.url.trim() == url) setState(() => _bytes = bytes);
     } catch (error, stackTrace) {
       _inFlight.remove(url);
