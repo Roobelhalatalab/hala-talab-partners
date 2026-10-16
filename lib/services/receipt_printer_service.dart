@@ -19,6 +19,7 @@ class ReceiptPrinterSettings {
     this.copyCount = 1,
     this.kitchenCopy = true,
     this.cashierCopy = false,
+    this.driverCopy = true,
     this.showOrderNumber = true,
     this.showCustomer = true,
     this.showItems = true,
@@ -50,6 +51,7 @@ class ReceiptPrinterSettings {
   final int copyCount;
   final bool kitchenCopy;
   final bool cashierCopy;
+  final bool driverCopy;
   final bool showOrderNumber;
   final bool showCustomer;
   final bool showItems;
@@ -90,6 +92,7 @@ class ReceiptPrinterSettings {
     int? copyCount,
     bool? kitchenCopy,
     bool? cashierCopy,
+    bool? driverCopy,
     bool? showOrderNumber,
     bool? showCustomer,
     bool? showItems,
@@ -123,6 +126,7 @@ class ReceiptPrinterSettings {
       copyCount: copyCount ?? this.copyCount,
       kitchenCopy: kitchenCopy ?? this.kitchenCopy,
       cashierCopy: cashierCopy ?? this.cashierCopy,
+      driverCopy: driverCopy ?? this.driverCopy,
       showOrderNumber: showOrderNumber ?? this.showOrderNumber,
       showCustomer: showCustomer ?? this.showCustomer,
       showItems: showItems ?? this.showItems,
@@ -156,6 +160,7 @@ class ReceiptPrinterSettings {
         'copyCount': copyCount,
         'kitchenCopy': kitchenCopy,
         'cashierCopy': cashierCopy,
+        'driverCopy': driverCopy,
         'showOrderNumber': showOrderNumber,
         'showCustomer': showCustomer,
         'showItems': showItems,
@@ -190,6 +195,7 @@ class ReceiptPrinterSettings {
       copyCount: ((json['copyCount'] as num?)?.toInt() ?? 1).clamp(1, 3),
       kitchenCopy: b('kitchenCopy', true),
       cashierCopy: b('cashierCopy', false),
+      driverCopy: b('driverCopy', true),
       showOrderNumber: b('showOrderNumber', true),
       showCustomer: b('showCustomer', true),
       showItems: b('showItems', true),
@@ -379,12 +385,6 @@ class ReceiptPrinterService {
       await _setPrintState(orderId, success: false, message: result.message);
       return result;
     }
-    if (!settings.kitchenCopy && !settings.cashierCopy) {
-      const result = ReceiptPrintResult(success: false, message: 'اختر نسخة المطبخ أو الكاشير من إعدادات الطابعة');
-      await _setPrintState(orderId, success: false, message: result.message);
-      return result;
-    }
-
     try {
       final bytes = await _buildReceiptPdf(
         order: order,
@@ -534,7 +534,7 @@ class ReceiptPrinterService {
     ];
     pw.ImageProvider? storeLogo;
     final logoUrl = store?['logo_url']?.toString().trim() ?? '';
-    if (settings.printStoreLogo && logoUrl.isNotEmpty) {
+    if (logoUrl.isNotEmpty) {
       try {
         storeLogo = await networkImage(logoUrl);
       } catch (_) {
@@ -549,68 +549,90 @@ class ReceiptPrinterService {
       halaReceiptLogo = null;
     }
     final fontSize = switch (settings.fontSize) {
-      'small' => 8.5,
+      'small' => 9.0,
       'large' => 12.0,
-      _ => 10.0,
+      _ => 10.5,
     };
     final widthMm = settings.effectivePaperWidthMm;
     final items = List<Map<String, dynamic>>.from(
       order['order_items'] as List? ?? const [],
     );
     final copiesPerTemplate = settings.copyCount.clamp(1, 3);
-    final templates = <String>[
-      if (settings.kitchenCopy) 'kitchen',
-      if (settings.cashierCopy) 'cashier',
-    ];
+    const templates = <String>['unified'];
 
     for (final template in templates) {
       for (var copy = 0; copy < copiesPerTemplate; copy++) {
-        final estimatedMm = 58 + (items.length * 13) +
-            (settings.showAddress ? 10 : 0) +
-            (settings.showNotes ? 12 : 0) +
-            (template == 'cashier' ? 18 : 8);
+        // Compact thermal-roll height: reserve only the space the current
+        // order can actually use. Keep enough headroom for wrapped item names,
+        // extras/notes and the QR so nothing is clipped on larger orders.
+        var itemContentMm = 0.0;
+        for (final item in items) {
+          final name = _cleanReceiptText(orderItemDisplayName(item));
+          final extras = settings.showExtras ? _cleanReceiptText(_itemExtras(item)) : '';
+          final itemNote = settings.showNotes
+              ? _cleanReceiptText(_firstText(item, const ['notes', 'note', 'special_instructions']))
+              : '';
+          final nameLines = (name.length / 24).ceil().clamp(1, 4);
+          final extrasLines = extras.isEmpty ? 0 : (extras.length / 31).ceil().clamp(1, 4);
+          final noteLines = itemNote.isEmpty ? 0 : (itemNote.length / 31).ceil().clamp(1, 4);
+          itemContentMm += 6.0 + ((nameLines - 1) * 4.2) + (extrasLines * 3.5) + (noteLines * 3.5);
+        }
+        final orderNote = settings.showNotes
+            ? _cleanReceiptText(_firstText(order, const ['notes', 'note', 'customer_note', 'order_note']))
+            : '';
+        final orderNoteMm = orderNote.isEmpty ? 0.0 : 4.0 + ((orderNote.length / 31).ceil().clamp(1, 5) * 3.2);
+        final hasLocationQr = testPrint || _driverLocationUrl(order) != null;
+        final qrReserveMm = hasLocationQr
+            ? (settings.effectivePaperWidthMm <= 58 ? 48.0 : 53.0)
+            : 0.0;
+        // Fixed receipt sections (logos, order/customer data, table header and total)
+        // are kept compact. Reserve QR height separately, with safety room
+        // so it remains printable even after reducing unused bottom paper.
+        final estimatedMm = 88.0 + itemContentMm + orderNoteMm + qrReserveMm + 10.0;
 
         if (settings.usesDirectPrinter) {
           // Thermal roll: keep a readable font and let the receipt grow vertically.
           // Do not shrink long orders just to force them onto a fixed sheet.
-          final pageHeightMm = estimatedMm.clamp(80, 700).toDouble();
+          final pageHeightMm = estimatedMm.clamp(100, 1500).toDouble();
           final format = PdfPageFormat(
             widthMm * PdfPageFormat.mm,
             pageHeightMm * PdfPageFormat.mm,
-            marginAll: 2.5 * PdfPageFormat.mm,
+            marginAll: 1.2 * PdfPageFormat.mm,
           );
+          // MultiPage prevents silently clipping the trailing location QR if
+          // fonts, item wrapping or printer margins exceed the estimate.
           document.addPage(
-            pw.Page(
+            pw.MultiPage(
               pageFormat: format,
+              margin: pw.EdgeInsets.all(1.2 * PdfPageFormat.mm),
               theme: pw.ThemeData.withFont(base: baseFont, bold: baseFont),
-              build: (context) => pw.Directionality(
+              maxPages: 30,
+              build: (context) => _receiptWidgets(
+                order: order,
+                store: store,
+                settings: settings,
+                template: template,
+                fontSize: fontSize,
+                testPrint: testPrint,
+                copyIndex: copy + 1,
+                storeLogo: storeLogo,
+                halaReceiptLogo: halaReceiptLogo,
+                language: language,
+                fallbackFonts: fallbackFonts,
+              ).map((widget) => pw.Directionality(
                 textDirection: isArabicLike ? pw.TextDirection.rtl : pw.TextDirection.ltr,
-                child: _receiptBody(
-                  order: order,
-                  store: store,
-                  settings: settings,
-                  template: template,
-                  fontSize: fontSize,
-                  testPrint: testPrint,
-                  copyIndex: copy + 1,
-                  storeLogo: storeLogo,
-                  halaReceiptLogo: halaReceiptLogo,
-                  language: language,
-                  fallbackFonts: fallbackFonts,
-                ),
-              ),
+                child: widget,
+              )).toList(),
             ),
           );
         } else {
-          // General Android print service / fixed-sheet printers:
-          // paginate long orders instead of creating one extremely tall PDF page.
-          // A very tall page gets scaled down by drivers such as Canon/Epson,
-          // which makes the receipt text tiny. 80x140 mm stays readable and can
-          // expand to page 2, 3, ... automatically when the order is long.
-          final fixedPageHeightMm = widthMm <= 80 ? 140.0 : 190.0;
+          // Receipt roll on iOS/system printing: size by order contents too.
+          // A fixed 140 mm page can push the location QR onto a second page
+          // or clip it. Keep the same readable font and dynamic height.
+          final dynamicPageHeightMm = estimatedMm.clamp(100.0, 1500.0).toDouble();
           final format = PdfPageFormat(
             widthMm * PdfPageFormat.mm,
-            fixedPageHeightMm * PdfPageFormat.mm,
+            dynamicPageHeightMm * PdfPageFormat.mm,
           );
           document.addPage(
             pw.MultiPage(
@@ -668,18 +690,26 @@ class ReceiptPrinterService {
         (orderId.length >= 6 ? orderId.substring(0, 6) : orderId));
     final storeName = _cleanReceiptText(store?['name']?.toString().trim() ?? 'هلا طلب');
     final customer = _cleanReceiptText((order['customer_name'] ?? '-').toString());
-    final address = _cleanReceiptText((order['delivery_address'] ?? '-').toString());
-    final total = (order['total'] as num?)?.toDouble() ?? 0;
+    final total = _receiptNumber(order['total']) ?? 0;
+    // The persisted order total is already discounted: never subtract twice.
+    final discount = (_receiptNumber(order['discount_amount']) ?? 0).clamp(0, double.infinity).toDouble();
+    final couponCode = _firstText(order, const ['coupon_code', 'applied_coupon_code', 'promo_code']);
+    final discountLabel = couponCode.isNotEmpty
+        ? trDiscountCoupon(language)
+        : trDiscountOffer(language);
+    final discountPercent = _receiptNumber(order['discount_percentage'] ?? order['discount_percent']);
     final note = _cleanReceiptText(_firstText(order, const ['notes', 'note', 'customer_note', 'order_note']));
     final created = DateTime.tryParse(order['created_at']?.toString() ?? '')?.toLocal();
-    final isKitchen = template == 'kitchen';
     final copiesPerTemplate = settings.copyCount.clamp(1, 3);
     String tr(String ar, String en, String ku) => language == 'en' ? en : (language == 'ku' ? ku : ar);
-    final showPrices = settings.showPrices && !(isKitchen && settings.hideKitchenPrices);
+    final showPrices = settings.showPrices;
     final lineColor = PdfColors.grey600;
 
     pw.Widget text(String value, {double? size, bool bold = false, pw.TextAlign? align}) =>
-        pw.Text(
+        pw.Directionality(
+          textDirection: _isLatinReceiptValue(value) ? pw.TextDirection.ltr :
+              (language == 'en' ? pw.TextDirection.ltr : pw.TextDirection.rtl),
+          child: pw.Text(
           value,
           textAlign: align,
           style: pw.TextStyle(
@@ -687,124 +717,183 @@ class ReceiptPrinterService {
             fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
             fontFallback: fallbackFonts,
           ),
+        ),
         );
 
     final rows = <pw.Widget>[];
-    final headerLogoWidthMm = settings.effectivePaperWidthMm <= 58 ? 16.0 : 20.0;
+    final headerLogoWidthMm = settings.effectivePaperWidthMm <= 58 ? 12.5 : 14.5;
 
     rows.add(
       pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Column(
-            mainAxisSize: pw.MainAxisSize.min,
-            children: [
-              if (halaReceiptLogo != null)
-                pw.Container(
-                  width: headerLogoWidthMm * PdfPageFormat.mm,
-                  height: headerLogoWidthMm * PdfPageFormat.mm,
-                  child: pw.Image(halaReceiptLogo, fit: pw.BoxFit.contain),
-                )
-              else
-                pw.Container(
-                  width: headerLogoWidthMm * PdfPageFormat.mm,
-                  height: headerLogoWidthMm * PdfPageFormat.mm,
-                  alignment: pw.Alignment.center,
-                  decoration: pw.BoxDecoration(
-                    border: pw.Border.all(color: PdfColors.black, width: 1),
-                    shape: pw.BoxShape.circle,
-                  ),
-                  child: text('HT', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
-                ),
-              pw.SizedBox(height: 1.2 * PdfPageFormat.mm),
-              text(language == 'en' ? 'Hala Talab' : 'هلا طلب', size: fontSize + 0.3, bold: true, align: pw.TextAlign.center),
-            ],
-          ),
-          pw.SizedBox(width: 2.5 * PdfPageFormat.mm),
-          pw.Container(width: 0.5 * PdfPageFormat.mm, height: 18 * PdfPageFormat.mm, color: lineColor),
-          pw.SizedBox(width: 2.5 * PdfPageFormat.mm),
           pw.Expanded(
             child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
               mainAxisSize: pw.MainAxisSize.min,
               children: [
-                if (storeLogo != null)
-                  pw.Row(
-                    children: [
-                      pw.Container(
-                        width: 8 * PdfPageFormat.mm,
-                        height: 8 * PdfPageFormat.mm,
-                        child: pw.Image(storeLogo, fit: pw.BoxFit.contain),
-                      ),
-                      pw.SizedBox(width: 2 * PdfPageFormat.mm),
-                      pw.Expanded(
-                        child: text(
-                          settings.printStoreName ? storeName : (language == 'en' ? 'Store' : 'المتجر'),
-                          size: fontSize + 3,
-                          bold: true,
-                        ),
-                      ),
-                    ],
+                if (halaReceiptLogo != null)
+                  pw.Container(
+                    width: headerLogoWidthMm * PdfPageFormat.mm,
+                    height: headerLogoWidthMm * PdfPageFormat.mm,
+                    child: pw.Image(halaReceiptLogo, fit: pw.BoxFit.contain),
                   )
                 else
-                  text(
-                    settings.printStoreName ? storeName : (language == 'en' ? 'Store' : 'المتجر'),
-                    size: fontSize + 3,
-                    bold: true,
+                  pw.Container(
+                    width: headerLogoWidthMm * PdfPageFormat.mm,
+                    height: headerLogoWidthMm * PdfPageFormat.mm,
+                    alignment: pw.Alignment.center,
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.black, width: 1),
+                      shape: pw.BoxShape.circle,
+                    ),
+                    child: text('HT', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
                   ),
-                pw.SizedBox(height: 1.1 * PdfPageFormat.mm),
+                pw.SizedBox(height: 0.15 * PdfPageFormat.mm),
                 text(
-                  testPrint
-                      ? tr('اختبار طباعة هلا طلب', 'Hala Talab print test', 'تاقیکردنەوەی چاپی هەلا تەلەب')
-                      : (isKitchen
-                          ? tr('نسخة المطبخ', 'Kitchen copy', 'کۆپی چێشتخانە')
-                          : tr('نسخة الكاشير', 'Cashier copy', 'کۆپی کاشێر')),
-                  size: fontSize + 2,
-                  bold: false,
+                  language == 'en' ? 'Hala Talab' : 'هلا طلب',
+                  size: fontSize + 0.3,
+                  bold: true,
+                  align: pw.TextAlign.center,
                 ),
-                if (copiesPerTemplate > 1)
-                  text('${tr('نسخة', 'Copy', 'کۆپی')} $copyIndex', size: fontSize - 0.2),
               ],
+            ),
+          ),
+          pw.SizedBox(width: 1.2 * PdfPageFormat.mm),
+          pw.Expanded(
+            child: pw.Padding(
+              padding: pw.EdgeInsets.only(left: 1.2 * PdfPageFormat.mm),
+              child: pw.Column(
+                mainAxisSize: pw.MainAxisSize.min,
+                children: [
+                  if (storeLogo != null)
+                    pw.Container(
+                      width: headerLogoWidthMm * PdfPageFormat.mm,
+                      height: headerLogoWidthMm * PdfPageFormat.mm,
+                      child: pw.Image(storeLogo, fit: pw.BoxFit.contain),
+                    )
+                  else
+                    pw.Container(
+                      width: headerLogoWidthMm * PdfPageFormat.mm,
+                      height: headerLogoWidthMm * PdfPageFormat.mm,
+                      alignment: pw.Alignment.center,
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(color: PdfColors.black, width: 1),
+                        shape: pw.BoxShape.circle,
+                      ),
+                      child: text('S', size: fontSize + 1, bold: true, align: pw.TextAlign.center),
+                    ),
+                  pw.SizedBox(height: 0.15 * PdfPageFormat.mm),
+                  text(
+                    storeName,
+                    size: fontSize + 0.8,
+                    bold: true,
+                    align: pw.TextAlign.center,
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
-    rows.add(pw.SizedBox(height: 2 * PdfPageFormat.mm));
+    if (testPrint) {
+      rows.add(pw.SizedBox(height: 1.2 * PdfPageFormat.mm));
+      rows.add(
+        text(
+          tr('اختبار طباعة هلا طلب', 'Hala Talab print test', 'تاقیکردنەوەی چاپی هەلا تەلەب'),
+          size: fontSize + 1,
+          bold: true,
+          align: pw.TextAlign.center,
+        ),
+      );
+    }
+    if (copiesPerTemplate > 1) {
+      rows.add(
+        text(
+          '${tr('نسخة', 'Copy', 'کۆپی')} $copyIndex',
+          size: fontSize - 0.2,
+          align: pw.TextAlign.center,
+        ),
+      );
+    }
+    rows.add(pw.SizedBox(height: 0.15 * PdfPageFormat.mm));
     rows.add(pw.Divider(color: lineColor));
-    if (settings.showOrderNumber) {
-      rows.add(text('${tr('رقم الطلب', 'Order', 'ژمارەی داواکاری')} $number', size: fontSize + 3, bold: true, align: pw.TextAlign.center));
+
+    final dateText = created == null
+        ? ''
+        : '${created.year}-${created.month.toString().padLeft(2, '0')}-${created.day.toString().padLeft(2, '0')}';
+    final timeText = created == null
+        ? ''
+        : '${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}';
+    if (settings.showOrderNumber || created != null) {
+      rows.add(
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            if (settings.showOrderNumber)
+              text('${tr('طلب', 'Order', 'داواکاری')} #$number', size: fontSize + 1.8, bold: true),
+            if (created != null)
+              text('$timeText  $dateText', size: fontSize, bold: true),
+          ],
+        ),
+      );
     }
-    if (created != null) {
-      rows.add(text('${created.year}-${created.month.toString().padLeft(2, '0')}-${created.day.toString().padLeft(2, '0')}  ${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}', align: pw.TextAlign.center));
+
+    if (settings.showCustomer) {
+      rows.add(_receiptLabelValue(tr('الزبون', 'Customer', 'کڕیار'), customer, text));
     }
-    if (settings.showCustomer) rows.add(_receiptLabelValue(tr('الزبون', 'Customer', 'کڕیار'), customer, text));
-    if (settings.showAddress && address.trim().isNotEmpty && address != '-') {
-      rows.add(_receiptLabelValue(tr('العنوان', 'Address', 'ناونیشان'), address, text));
+    final customerPhone = _cleanReceiptText(_firstText(order, const [
+      'customer_phone',
+      'delivery_phone',
+      'phone',
+      'phone_number',
+    ]));
+    if (customerPhone.isNotEmpty) {
+      rows.add(_receiptLabelValue(tr('الهاتف', 'Phone', 'تەلەفۆن'), customerPhone, text));
     }
+    if (settings.showAddress) {
+      rows.add(
+        _receiptLabelValue(
+          tr('العنوان', 'Address', 'ناونیشان'),
+          tr('امسح QR لعرض الموقع', 'Scan QR to view location', 'QR سکان بکە بۆ بینینی شوێن'),
+          text,
+        ),
+      );
+    }
+
     rows.add(pw.Divider(color: lineColor));
 
     if (settings.showItems) {
+      // Explicit left-to-right column order: Price | Qty | Item.
+      rows.add(pw.Directionality(
+        textDirection: pw.TextDirection.ltr,
+        child: pw.Row(children: [
+          if (showPrices) pw.SizedBox(width: 25 * PdfPageFormat.mm,
+            child: text(tr('السعر', 'Price', 'نرخ'), bold: true, align: pw.TextAlign.left)),
+          pw.SizedBox(width: 13 * PdfPageFormat.mm, child: text(tr('الكمية', 'Qty', 'ژمارە'), bold: true, align: pw.TextAlign.center)),
+          pw.Expanded(child: text(tr('الصنف', 'Item', 'بابەت'), bold: true, align: pw.TextAlign.right)),
+        ]),
+      ));
+      rows.add(pw.SizedBox(height: 0.1));
       for (final item in items) {
         final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
         final name = _cleanReceiptText(orderItemDisplayName(item));
         final price = ((item['unit_price'] ?? item['price']) as num?)?.toDouble() ?? 0;
-        rows.add(
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // Keep the line simple and glyph-safe: quantity + product name,
-              // without x/× separators that some printer fonts render as squares.
-              pw.Expanded(child: text('$quantity  $name', size: fontSize + 1, bold: true)),
-              if (showPrices) text('${(price * quantity).toStringAsFixed(0)} د.ع', bold: true),
-            ],
-          ),
-        );
+        rows.add(pw.Directionality(
+          textDirection: pw.TextDirection.ltr,
+          child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+            if (showPrices) pw.SizedBox(width: 25 * PdfPageFormat.mm,
+              child: text('${(price * quantity).toStringAsFixed(0)} د.ع', bold: true, align: pw.TextAlign.left)),
+            pw.SizedBox(width: 13 * PdfPageFormat.mm,
+              child: text('$quantity', size: fontSize + 0.5, bold: true, align: pw.TextAlign.center)),
+            pw.Expanded(child: text(name, size: fontSize + 0.5, bold: true, align: pw.TextAlign.right)),
+          ]),
+        ));
         if (settings.showExtras) {
           final extras = _cleanReceiptText(_itemExtras(item));
           if (extras.isNotEmpty) {
             rows.add(pw.Padding(
-              padding: const pw.EdgeInsets.only(top: 2, bottom: 2),
+              padding: const pw.EdgeInsets.only(top: 0.1, bottom: 0.1),
               child: text('${tr('الإضافات', 'Extras', 'زیادکراوەکان')}: $extras', size: fontSize - 1),
             ));
           }
@@ -815,7 +904,7 @@ class ReceiptPrinterService {
             rows.add(text('${tr('ملاحظة', 'Note', 'تێبینی')}: $itemNote', size: fontSize - 1, bold: true));
           }
         }
-        rows.add(pw.SizedBox(height: 5));
+        rows.add(pw.SizedBox(height: 0.25));
       }
     }
 
@@ -823,9 +912,60 @@ class ReceiptPrinterService {
       rows.add(pw.Divider(color: lineColor));
       rows.add(text('${tr('ملاحظة الطلب', 'Order note', 'تێبینی داواکاری')}: $note', size: fontSize + 1, bold: true));
     }
-    if (!isKitchen && showPrices) {
+    if (showPrices) {
       rows.add(pw.Divider(color: lineColor));
-      rows.add(_receiptLabelValue(tr('الإجمالي', 'Total', 'کۆی گشتی'), '${total.toStringAsFixed(0)} د.ع', text, bold: true));
+      if (discount > 0) {
+        final pct = discountPercent != null && discountPercent >= 0.5 && discountPercent <= 100
+            ? ' (${discountPercent.toStringAsFixed(discountPercent.roundToDouble() == discountPercent ? 0 : 1)}%)'
+            : '';
+        rows.add(_receiptLabelValue('$discountLabel$pct', '-${discount.toStringAsFixed(0)} د.ع', text));
+        rows.add(_receiptLabelValue(tr('المجموع بعد الخصم', 'Total after discount', 'کۆی دوای داشکاندن'),
+            '${total.toStringAsFixed(0)} د.ع', text, bold: true));
+      } else {
+        rows.add(_receiptLabelValue(tr('المجموع', 'Total', 'کۆی گشتی'),
+            '${total.toStringAsFixed(0)} د.ع', text, bold: true));
+      }
+    }
+
+    // Always include a scannable QR on printer test receipts as well.
+    // A real-order QR uses the persisted delivery coordinates, not a test URL.
+    // The test QR is explicitly marked and never represents a customer's location.
+    final locationUrl = testPrint
+        ? 'https://www.google.com/maps?q=36.34,43.13'
+        : _driverLocationUrl(order);
+    if (locationUrl != null) {
+      final qrSizeMm = settings.effectivePaperWidthMm <= 58 ? 28.0 : 34.0;
+      // Keep label and QR together: never allow pagination between them.
+      rows.add(pw.Column(
+        mainAxisSize: pw.MainAxisSize.min,
+        children: [
+          pw.SizedBox(height: 1.0 * PdfPageFormat.mm),
+          pw.Center(child: text(
+            testPrint ? 'TEST QR - NOT CUSTOMER LOCATION' :
+                tr('موقع الزبون - امسح الرمز', 'Customer location - scan QR', 'شوێنی کڕیار - QR بسکەنە'),
+            size: fontSize - 1,
+            align: pw.TextAlign.center,
+          )),
+          pw.SizedBox(height: 0.8 * PdfPageFormat.mm),
+          pw.Center(child: pw.BarcodeWidget(
+            barcode: pw.Barcode.qrCode(),
+            data: locationUrl,
+            width: qrSizeMm * PdfPageFormat.mm,
+            height: qrSizeMm * PdfPageFormat.mm,
+            drawText: false,
+          )),
+          pw.SizedBox(height: 0.8 * PdfPageFormat.mm),
+        ],
+      ));
+    } else {
+      // Never tell the driver to scan a QR that was not generated.
+      rows.add(pw.Center(child: text(
+        tr('موقع الزبون غير متوفر لهذا الطلب',
+           'Customer location unavailable for this order',
+           'شوێنی کڕیار بۆ ئەم داواکارییە بەردەست نییە'),
+        size: fontSize - 1,
+        align: pw.TextAlign.center,
+      )));
     }
 
     return rows;
@@ -869,7 +1009,7 @@ class ReceiptPrinterService {
     bool bold = false,
   }) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      padding: const pw.EdgeInsets.symmetric(vertical: 1),
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
@@ -879,6 +1019,54 @@ class ReceiptPrinterService {
         ],
       ),
     );
+  }
+
+  static bool _isLatinReceiptValue(String value) {
+    // Prevent English-only customer names from being visually reversed by RTL PDF layout.
+    return RegExp(r'[A-Za-z]').hasMatch(value) &&
+        !RegExp(r'[\u0600-\u06FF\u0750-\u077F]').hasMatch(value);
+  }
+
+  static double? _receiptNumber(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString().trim() ?? '');
+  }
+
+  static String trDiscountCoupon(String language) => language == 'en'
+      ? 'Coupon discount' : language == 'ku' ? 'داشکاندنی کۆپۆن' : 'خصم الكوبون';
+
+  static String trDiscountOffer(String language) => language == 'en'
+      ? 'Offer discount' : language == 'ku' ? 'داشکاندنی ئۆفەر' : 'خصم العرض';
+
+  double? _orderCoordinate(Map<String, dynamic> order, List<String> keys) {
+    for (final key in keys) {
+      final raw = order[key];
+      if (raw is num) return raw.toDouble();
+      final parsed = double.tryParse(raw?.toString().trim() ?? '');
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  String? _driverLocationUrl(Map<String, dynamic> order) {
+    final latitude = _orderCoordinate(order, const [
+      'delivery_latitude',
+      'customer_latitude',
+      'latitude',
+    ]);
+    final longitude = _orderCoordinate(order, const [
+      'delivery_longitude',
+      'customer_longitude',
+      'longitude',
+    ]);
+    if (latitude == null || longitude == null) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return null;
+    }
+    return Uri.https('waze.com', '/ul', {
+      'll': '$latitude,$longitude',
+      'navigate': 'yes',
+    }).toString();
   }
 
   String _cleanReceiptText(String value) {
