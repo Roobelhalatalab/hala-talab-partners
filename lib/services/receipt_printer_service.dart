@@ -875,7 +875,43 @@ class ReceiptPrinterService {
         ]),
       ));
       rows.add(pw.SizedBox(height: 0.1));
+      // Combo information is printed once above its first product.
+      // Existing receipt rows, pricing, totals, QR and transport are unchanged.
+      final printedComboIds = <String>{};
       for (final item in items) {
+        final comboId = item['product_offer_id']?.toString().trim() ?? '';
+        if (comboId.isNotEmpty && printedComboIds.add(comboId)) {
+          final comboTitle = _cleanReceiptText(
+            (item['combo_title_snapshot'] ?? item['display_combo_title'])?.toString().trim() ?? '',
+          );
+          final rawCount = item['combo_count'];
+          final comboCount = rawCount is num && rawCount > 0 ? rawCount.toInt() : null;
+          final displayTitle = comboTitle.isEmpty
+              ? tr('عرض كومبو', 'Combo offer', 'ئۆفەری کۆمبۆ')
+              : comboTitle;
+          rows.add(text(
+            comboCount == null ? displayTitle : '$displayTitle ×$comboCount',
+            size: fontSize,
+            bold: true,
+          ));
+          // Display discount as information only; never change final totals.
+          double comboDiscount = 0;
+          for (final comboLine in items) {
+            if ((comboLine['product_offer_id']?.toString().trim() ?? '') != comboId) continue;
+            final discountedUnit = _receiptNumber(comboLine['unit_price'] ?? comboLine['price']) ?? 0;
+            final originalUnit = _receiptNumber(comboLine['original_unit_price']) ?? discountedUnit;
+            final lineQuantity = _receiptNumber(comboLine['quantity']) ?? 1;
+            if (originalUnit > discountedUnit) {
+              comboDiscount += (originalUnit - discountedUnit) * lineQuantity;
+            }
+          }
+          if (comboDiscount > 0 && showPrices) {
+            rows.add(text(
+              '${tr('خصم الكومبو', 'Combo discount', 'داشکاندنی کۆمبۆ')}: ${comboDiscount.toStringAsFixed(0)} د.ع',
+              size: fontSize - 1,
+            ));
+          }
+        }
         final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
         final name = _cleanReceiptText(orderItemDisplayName(item));
         final price = ((item['unit_price'] ?? item['price']) as num?)?.toDouble() ?? 0;

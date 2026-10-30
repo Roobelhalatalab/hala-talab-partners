@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth_service.dart';
@@ -56,6 +57,8 @@ class OffersRepository {
     required DateTime startAt,
     required DateTime endAt,
     required bool isActive,
+    String? imageUrl,
+    String? imagePath,
   }) async {
     final storeId = await _storeId();
     if (storeId == null || storeId.isEmpty) {
@@ -80,6 +83,8 @@ class OffersRepository {
       'start_at': startAt.toUtc().toIso8601String(),
       'end_at': endAt.toUtc().toIso8601String(),
       'is_active': isActive,
+      'image_url': (imageUrl ?? '').trim().isEmpty ? null : imageUrl,
+      'image_path': (imagePath ?? '').trim().isEmpty ? null : imagePath,
     };
     if (promotionId == null) {
       return _client.from('store_promotions').insert(values).select().single();
@@ -95,6 +100,67 @@ class OffersRepository {
   Future<void> deletePromotion(String id) async {
     final storeId = await _requireStoreId();
     await _client.from('store_promotions').delete().eq('id', id).eq('store_id', storeId);
+  }
+
+  // Note 4: product-specific offers live in a separate table. Existing
+  // store_promotions (general offers) and coupons are intentionally untouched.
+  Future<List<Map<String, dynamic>>> getProductOffers() async {
+    final storeId = await _storeId();
+    if (storeId == null || storeId.isEmpty) return const [];
+    final rows = await _client.from('store_product_offers').select()
+        .eq('store_id', storeId).order('created_at', ascending: false);
+    return List<Map<String, dynamic>>.from(rows);
+  }
+
+  Future<Map<String, dynamic>> saveProductOffer({
+    String? offerId,
+    required String title,
+    required List<String> productIds,
+    required String discountType,
+    required double discountValue,
+    required DateTime startAt,
+    required DateTime endAt,
+    required bool isActive,
+    String? imageUrl,
+    String? imagePath,
+  }) async {
+    final storeId = await _requireStoreId();
+    final ids = productIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList();
+    if (title.trim().isEmpty || ids.isEmpty ||
+        !const {'percentage', 'fixed', 'final_price'}.contains(discountType) ||
+        discountValue < 0 || (discountType == 'percentage' && discountValue > 100) ||
+        !endAt.isAfter(startAt)) {
+      throw const FormatException('Invalid product offer');
+    }
+    final values = <String, dynamic>{
+      'store_id': storeId,
+      'title': title.trim(),
+      'product_ids': ids,
+      'discount_type': discountType,
+      'discount_value': discountValue,
+      'start_at': startAt.toUtc().toIso8601String(),
+      'end_at': endAt.toUtc().toIso8601String(),
+      'is_active': isActive,
+      'image_url': imageUrl,
+      'image_path': imagePath,
+    };
+    if (offerId == null) {
+      return _client.from('store_product_offers').insert(values).select().single();
+    }
+    return _client.from('store_product_offers').update(values)
+        .eq('id', offerId).eq('store_id', storeId).select().single();
+  }
+
+  Future<void> deleteProductOffer(String offerId) async {
+    final storeId = await _requireStoreId();
+    await _client.from('store_product_offers').delete()
+        .eq('id', offerId).eq('store_id', storeId);
+  }
+
+  Future<void> setProductOfferActive(String offerId, bool active) async {
+    final storeId = await _requireStoreId();
+    await _client.from('store_product_offers').update({'is_active': active})
+        .eq('id', offerId).eq('store_id', storeId);
   }
 
   Future<List<Map<String, dynamic>>> getCoupons() async {
@@ -122,6 +188,8 @@ class OffersRepository {
     required DateTime startAt,
     required DateTime endAt,
     required bool isActive,
+    String? imageUrl,
+    String? imagePath,
   }) async {
     final storeId = await _requireStoreId();
     _validateDiscount(discountType, discountValue);
@@ -146,6 +214,8 @@ class OffersRepository {
       'start_at': startAt.toUtc().toIso8601String(),
       'end_at': endAt.toUtc().toIso8601String(),
       'is_active': isActive,
+      'image_url': (imageUrl ?? '').trim().isEmpty ? null : imageUrl,
+      'image_path': (imagePath ?? '').trim().isEmpty ? null : imagePath,
     };
     if (couponId == null) {
       return _client.from('coupons').insert(values).select().single();
@@ -161,6 +231,39 @@ class OffersRepository {
   Future<void> deleteCoupon(String id) async {
     final storeId = await _requireStoreId();
     await _client.from('coupons').delete().eq('id', id).eq('store_id', storeId);
+  }
+
+
+  Future<Map<String, String>> uploadCampaignImage({
+    required Uint8List bytes,
+    required String extension,
+    String? oldPath,
+  }) async {
+    final storeId = await _requireStoreId();
+    final ext = extension.toLowerCase().replaceAll('.', '') == 'webp'
+        ? 'webp'
+        : extension.toLowerCase().replaceAll('.', '') == 'png'
+            ? 'png'
+            : 'jpg';
+    final path = '$storeId/campaigns/${DateTime.now().microsecondsSinceEpoch}.$ext';
+    await _client.storage.from('product-images').uploadBinary(
+      path,
+      bytes,
+      fileOptions: FileOptions(
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: ext == 'png' ? 'image/png' : ext == 'webp' ? 'image/webp' : 'image/jpeg',
+      ),
+    );
+    if ((oldPath ?? '').isNotEmpty && oldPath != path) {
+      try { await _client.storage.from('product-images').remove([oldPath!]); } catch (_) {}
+    }
+    return {'path': path, 'url': _client.storage.from('product-images').getPublicUrl(path)};
+  }
+
+  Future<void> removeCampaignImage(String? path) async {
+    if ((path ?? '').isEmpty) return;
+    try { await _client.storage.from('product-images').remove([path!]); } catch (_) {}
   }
 
   Future<Map<String, dynamic>> quoteDiscount({

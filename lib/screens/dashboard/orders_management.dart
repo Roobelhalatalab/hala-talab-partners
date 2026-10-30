@@ -1,5 +1,12 @@
 part of 'partner_dashboard.dart';
 
+String _ordersLocalText(BuildContext context, String ar, String ku, String en) {
+  final code = Localizations.localeOf(context).languageCode.toLowerCase();
+  if (code.startsWith('ku')) return ku;
+  if (code.startsWith('en')) return en;
+  return ar;
+}
+
 class _OrdersManagementPage extends StatefulWidget {
   const _OrdersManagementPage();
 
@@ -18,6 +25,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
   final Set<String> _updatingOrderIds = <String>{};
   final Set<String> _printingOrderIds = <String>{};
   final Map<String, Map<String, dynamic>> _printStates = <String, Map<String, dynamic>>{};
+  bool _selfDelivery = false;
 
   @override
   void initState() {
@@ -121,9 +129,11 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
       });
     }
     try {
+      final store = await AuthService.instance.getCurrentStore();
       final orders = await OrdersRepository.instance.getOrders();
       if (!mounted) return;
       setState(() {
+        _selfDelivery = store?['self_delivery'] == true;
         _orders = orders;
         _error = null;
       });
@@ -198,10 +208,8 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
     switch (_filter) {
       case 'pending':
         return status == 'pending';
-      case 'preparing':
-        return const ['accepted', 'preparing'].contains(status);
-      case 'ready':
-        return const ['ready', 'assigned', 'picked_up'].contains(status);
+            case 'ready':
+        return const ['accepted', 'preparing', 'ready', 'assigned', 'picked_up'].contains(status);
       case 'delivered':
         return status == 'delivered';
       case 'cancelled':
@@ -263,7 +271,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
       });
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(s.t('orderUpdated'))));
-      if (status == 'preparing') {
+      if (status == 'ready' && order['status'] == 'pending') {
         final printerSettings = await ReceiptPrinterService.instance.loadSettings();
         if (printerSettings.autoPrintAfterAccept) {
           final currentOrder = <String, dynamic>{...order, ...updated, 'status': status};
@@ -297,8 +305,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
     final s = AppStrings.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final pendingCount = _countFor('pending');
-    final preparingCount = _countFor('preparing');
-    final readyCount = _countFor('ready');
+        final readyCount = _countFor('ready');
     final deliveredCount = _countFor('delivered');
     final cancelledCount = _countFor('cancelled');
 
@@ -329,8 +336,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
                     _OrderStageStrip(
                       selected: _filter,
                       pendingCount: pendingCount,
-                      preparingCount: preparingCount,
-                      readyCount: readyCount,
+                                            readyCount: readyCount,
                       deliveredCount: deliveredCount,
                       onSelected: (value) => setState(() => _filter = value),
                     ),
@@ -372,6 +378,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
                             onPrint: () => _printOrder(order),
                             isPrinting: _printingOrderIds.contains(order['id']?.toString()),
                             printState: _printStates[order['id']?.toString()],
+                            allowStoreDelivery: _selfDelivery && !_isPickupOrder(order) && order['driver_id'] == null,
                           ),
                         ),
                       ),
@@ -452,16 +459,14 @@ class _OrderStageStrip extends StatelessWidget {
   const _OrderStageStrip({
     required this.selected,
     required this.pendingCount,
-    required this.preparingCount,
-    required this.readyCount,
+        required this.readyCount,
     required this.deliveredCount,
     required this.onSelected,
   });
 
   final String selected;
   final int pendingCount;
-  final int preparingCount;
-  final int readyCount;
+    final int readyCount;
   final int deliveredCount;
   final ValueChanged<String> onSelected;
 
@@ -475,13 +480,6 @@ class _OrderStageStrip extends StatelessWidget {
         count: pendingCount,
         icon: Icons.notifications_active_outlined,
         color: AppColors.orange,
-      ),
-      _StageData(
-        value: 'preparing',
-        label: s.t('inProgressOrders'),
-        count: preparingCount,
-        icon: Icons.soup_kitchen_rounded,
-        color: const Color(0xFFF59E0B),
       ),
       _StageData(
         value: 'ready',
@@ -782,6 +780,7 @@ class _OrderCard extends StatelessWidget {
     required this.onPrint,
     required this.isPrinting,
     required this.printState,
+    required this.allowStoreDelivery,
   });
 
   final Map<String, dynamic> order;
@@ -791,6 +790,7 @@ class _OrderCard extends StatelessWidget {
   final VoidCallback onPrint;
   final bool isPrinting;
   final Map<String, dynamic>? printState;
+  final bool allowStoreDelivery;
 
   double? _coordinate(List<String> keys) {
     for (final key in keys) {
@@ -817,12 +817,12 @@ class _OrderCard extends StatelessWidget {
 
     bool opened = false;
     if (latitude != null && longitude != null) {
-      opened = await MapsService.instance.openDirectionsToCoordinates(
+      opened = await MapsService.instance.openWazeNavigationCoordinates(
         latitude: latitude,
         longitude: longitude,
       );
     } else if (address.isNotEmpty && address != '-') {
-      opened = await MapsService.instance.openDirectionsToAddress(address);
+      opened = await MapsService.instance.openWazeNavigationAddress(address);
     }
 
     if (!context.mounted || opened) return;
@@ -1008,7 +1008,7 @@ class _OrderCard extends StatelessWidget {
                     SizedBox(height: compact ? 9 : 9),
                     _OrderItemsPreview(items: items),
                   ],
-                  if (printState != null && const ['accepted', 'preparing'].contains(status)) ...[
+                  if (printState != null && const ['accepted', 'preparing', 'ready'].contains(status)) ...[
                     const SizedBox(height: 8),
                     _OrderPrintStateBadge(state: printState!),
                   ],
@@ -1035,6 +1035,7 @@ class _OrderCard extends StatelessWidget {
                       onPrint: onPrint,
                       isPrinting: isPrinting,
                       hasPrinted: printState?['success'] == true,
+                      allowStoreDelivery: allowStoreDelivery,
                     ),
                   ] else
                     Row(
@@ -1060,6 +1061,7 @@ class _OrderCard extends StatelessWidget {
                           onPrint: onPrint,
                           isPrinting: isPrinting,
                           hasPrinted: printState?['success'] == true,
+                          allowStoreDelivery: allowStoreDelivery,
                         ),
                       ],
                     ),
@@ -1081,6 +1083,7 @@ class _OrderPrimaryActions extends StatelessWidget {
     required this.onPrint,
     required this.isPrinting,
     required this.hasPrinted,
+    required this.allowStoreDelivery,
   });
 
   final String status;
@@ -1089,6 +1092,7 @@ class _OrderPrimaryActions extends StatelessWidget {
   final VoidCallback onPrint;
   final bool isPrinting;
   final bool hasPrinted;
+  final bool allowStoreDelivery;
 
   @override
   Widget build(BuildContext context) {
@@ -1115,7 +1119,7 @@ class _OrderPrimaryActions extends StatelessWidget {
             ),
           ),
           FilledButton.icon(
-            onPressed: isUpdating ? null : () => onStatusChanged('preparing'),
+            onPressed: isUpdating ? null : () => onStatusChanged('ready'),
             icon: const Icon(Icons.check_rounded),
             label: Text(s.t('acceptOrder')),
             style: FilledButton.styleFrom(
@@ -1124,7 +1128,7 @@ class _OrderPrimaryActions extends StatelessWidget {
             ),
           ),
         ],
-        if (const ['accepted', 'preparing'].contains(status))
+        if (const ['accepted', 'preparing', 'ready'].contains(status))
           OutlinedButton.icon(
             onPressed: isPrinting ? null : onPrint,
             icon: isPrinting
@@ -1137,13 +1141,13 @@ class _OrderPrimaryActions extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
             ),
           ),
-        if (status == 'preparing')
+        if (status == 'ready' && allowStoreDelivery)
           FilledButton.icon(
-            onPressed: isUpdating ? null : () => onStatusChanged('ready'),
-            icon: const Icon(Icons.inventory_2_outlined),
-            label: Text(s.t('markReady')),
+            onPressed: isUpdating ? null : () => onStatusChanged('delivered'),
+            icon: const Icon(Icons.task_alt_rounded),
+            label: Text(_ordersLocalText(context, 'تم التسليم', 'گەیەندرا', 'Delivered')),
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF0F9D68),
+              backgroundColor: const Color(0xFF2563EB),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
             ),
           ),
@@ -1497,12 +1501,12 @@ class _OrderDetailsDialog extends StatelessWidget {
 
     bool opened = false;
     if (latitude != null && longitude != null) {
-      opened = await MapsService.instance.openDirectionsToCoordinates(
+      opened = await MapsService.instance.openWazeNavigationCoordinates(
         latitude: latitude,
         longitude: longitude,
       );
     } else if (address.isNotEmpty && address != '-') {
-      opened = await MapsService.instance.openDirectionsToAddress(address);
+      opened = await MapsService.instance.openWazeNavigationAddress(address);
     }
 
     if (!context.mounted || opened) return;
@@ -1526,6 +1530,23 @@ class _OrderDetailsDialog extends StatelessWidget {
     final items = List<Map<String, dynamic>>.from(
       order['order_items'] as List? ?? const [],
     );
+    // Group only items with a persisted offer ID. Ordinary/legacy items keep
+    // their original display order and are never inferred to be part of a combo.
+    final groupedItems = <Map<String, dynamic>>[];
+    final comboGroups = <String, List<Map<String, dynamic>>>{};
+    for (final item in items) {
+      final offerId = item['product_offer_id']?.toString() ?? '';
+      if (offerId.isEmpty) {
+        groupedItems.add(item);
+      } else {
+        if (!comboGroups.containsKey(offerId)) {
+          final group = <Map<String, dynamic>>[];
+          comboGroups[offerId] = group;
+          groupedItems.add({'_combo_group': group, '_combo_offer_id': offerId});
+        }
+        comboGroups[offerId]!.add(item);
+      }
+    }
     final total = (order['total'] as num?)?.toDouble() ?? 0;
     final isPickup = _isPickupOrder(order);
     return AlertDialog(
@@ -1589,7 +1610,81 @@ class _OrderDetailsDialog extends StatelessWidget {
                   style: const TextStyle(color: AppColors.muted),
                 )
               else
-                ...items.map((item) {
+                ...groupedItems.map((item) {
+                  final group = item['_combo_group'];
+                  if (group is List<Map<String, dynamic>> && group.isNotEmpty) {
+                    final rawTitle = (group.first['combo_title_snapshot'] ?? group.first['display_combo_title'])?.toString().trim() ?? '';
+                    final label = rawTitle.isEmpty ? 'عرض كومبو' : rawTitle;
+                    final savedTotal = group.fold<double>(0, (sum, line) {
+                      final qty = (line['quantity'] as num?)?.toDouble() ?? 0;
+                      final unit = (line['unit_price'] as num?)?.toDouble() ?? 0;
+                      return sum + qty * unit;
+                    });
+                    final originalTotal = group.fold<double>(0, (sum, line) {
+                      final qty = (line['quantity'] as num?)?.toDouble() ?? 0;
+                      final unit = (line['unit_price'] as num?)?.toDouble() ?? 0;
+                      final original = (line['original_unit_price'] as num?)?.toDouble() ?? unit;
+                      return sum + qty * (original > unit ? original : unit);
+                    });
+                    final discount = originalTotal - savedTotal;
+                    // Do not guess the number of complete bundles from line quantities:
+                    // that requires the saved offer composition / explicit bundle count.
+                    final rawCount = group.first['combo_count'];
+                    final count = rawCount is num && rawCount > 0 ? rawCount.toInt() : null;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF6EE),
+                        border: Border.all(color: const Color(0xFFF2CDAF)),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(count == null ? label : '$label ×$count',
+                            style: const TextStyle(fontWeight: FontWeight.w900,
+                              color: AppColors.orangeDark)),
+                          const SizedBox(height: 8),
+                          ...group.map((line) {
+                            final qty = (line['quantity'] as num?)?.toInt() ?? 1;
+                            final unit = (line['unit_price'] as num?)?.toDouble() ?? 0;
+                            final note = line['notes']?.toString().trim() ?? '';
+                            final description = line['display_product_description']?.toString().trim() ?? '';
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 7),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(children: [
+                                    Expanded(child: Text('$qty × ${orderItemDisplayName(line)}',
+                                      style: const TextStyle(fontWeight: FontWeight.w700))),
+                                    Text('${(qty * unit).toStringAsFixed(0)} د.ع'),
+                                  ]),
+                                  if (description.isNotEmpty)
+                                    Text(description, style: const TextStyle(
+                                      color: AppColors.muted, fontSize: 12)),
+                                  if (note.isNotEmpty)
+                                    Text('ملاحظة العميل: $note', style: const TextStyle(
+                                      color: AppColors.orangeDark, fontSize: 12)),
+                                ],
+                              ),
+                            );
+                          }),
+                          const Divider(),
+                          if (discount > 0) ...[
+                            Text('${originalTotal.toStringAsFixed(0)} د.ع',
+                              style: const TextStyle(decoration: TextDecoration.lineThrough,
+                                color: AppColors.muted)),
+                            Text('خصم ${discount.toStringAsFixed(0)} د.ع',
+                              style: const TextStyle(color: AppColors.orangeDark)),
+                          ],
+                          Text('بعد الخصم: ${savedTotal.toStringAsFixed(0)} د.ع',
+                            style: const TextStyle(fontWeight: FontWeight.w900)),
+                        ],
+                      ),
+                    );
+                  }
                   final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
                   final unitPrice =
                       (item['unit_price'] as num?)?.toDouble() ?? 0;
@@ -1623,6 +1718,17 @@ class _OrderDetailsDialog extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if ((item['display_combo_title']?.toString() ?? '').isNotEmpty) ...[
+                                Text(
+                                  item['display_combo_title'].toString(),
+                                  style: const TextStyle(
+                                    color: AppColors.orangeDark,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                              ],
                               Text(
                                 orderItemDisplayName(item),
                                 style: const TextStyle(fontWeight: FontWeight.w900),
@@ -1645,6 +1751,13 @@ class _OrderDetailsDialog extends StatelessWidget {
                                     fontSize: 12,
                                     fontWeight: FontWeight.w800,
                                   ),
+                                ),
+                              ],
+                              if ((item['display_product_description']?.toString() ?? '').trim().isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  item['display_product_description'].toString().trim(),
+                                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
                                 ),
                               ],
                               if ((item['notes']?.toString() ?? '').trim().isNotEmpty) ...[

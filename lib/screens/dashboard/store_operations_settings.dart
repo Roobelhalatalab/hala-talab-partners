@@ -23,7 +23,10 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
   bool _isOpen = false;
   bool _deliveryAvailable = true;
   bool _pickupAvailable = true;
+  bool _selfDelivery = false;
+  bool _alwaysOpen = false;
   int _shiftMode = 1;
+  String _menuMode = 'different';
   String _morningStart = '08:00';
   String _morningEnd = '15:00';
   String _eveningStart = '15:00';
@@ -69,8 +72,11 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
     _installSelectAllOnFocus(_preparationMinutesFocus, _preparationMinutes);
     _deliveryAvailable = store['delivery_available'] != false;
     _pickupAvailable = store['pickup_available'] != false;
-    _isOpen = store['is_open'] == true;
+    _selfDelivery = store['self_delivery'] == true;
+    _alwaysOpen = store['always_open'] == true;
+    _isOpen = _alwaysOpen || store['is_open'] == true;
     _shiftMode = (store['shift_mode'] as num?)?.toInt() == 2 ? 2 : 1;
+    _menuMode = store['menu_mode'] == 'unified' ? 'unified' : 'different';
 
     final rawHours = store['working_hours'];
     final hours = rawHours is Map ? Map<String, dynamic>.from(rawHours) : const <String, dynamic>{};
@@ -122,8 +128,11 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
     _deliveryZones.text = zones is List ? zones.map((e) => e.toString()).join('\n') : '';
     _deliveryAvailable = store['delivery_available'] != false;
     _pickupAvailable = store['pickup_available'] != false;
-    _isOpen = store['is_open'] == true;
+    _selfDelivery = store['self_delivery'] == true;
+    _alwaysOpen = store['always_open'] == true;
+    _isOpen = _alwaysOpen || store['is_open'] == true;
     _shiftMode = (store['shift_mode'] as num?)?.toInt() == 2 ? 2 : 1;
+    _menuMode = store['menu_mode'] == 'unified' ? 'unified' : 'different';
     final rawHours = store['working_hours'];
     final hours = rawHours is Map ? Map<String, dynamic>.from(rawHours) : const <String, dynamic>{};
     for (final key in _dayKeys) {
@@ -385,15 +394,17 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
       return;
     }
     final schedulesToValidate = _shiftMode == 2 ? <Map<String, _WorkingDayValue>>[_morningDays, _eveningDays] : <Map<String, _WorkingDayValue>>[_days];
-    for (final schedule in schedulesToValidate) {
-      for (final day in schedule.values) {
-        if (day.enabled && (!_validTime(day.open) || !_validTime(day.close) || day.open == day.close)) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tx('تحقق من أوقات الدوام؛ وقت الفتح والإغلاق يجب أن يكونا صالحين ومختلفين.', 'کاتەکانی کار بپشکنە.', 'Check working hours; open and close times must be valid and different.'))));
-          return;
+    if (!_alwaysOpen) {
+      for (final schedule in schedulesToValidate) {
+        for (final day in schedule.values) {
+          if (day.enabled && (!_validTime(day.open) || !_validTime(day.close) || day.open == day.close)) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tx('تحقق من أوقات الدوام؛ وقت الفتح والإغلاق يجب أن يكونا صالحين ومختلفين.', 'کاتەکانی کار بپشکنە.', 'Check working hours; open and close times must be valid and different.'))));
+            return;
+          }
         }
       }
     }
-    if (_shiftMode == 2) {
+    if (!_alwaysOpen && _shiftMode == 2) {
       for (final key in _dayKeys) {
         if (_intervalsOverlap(_morningDays[key]!, _eveningDays[key]!)) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tx('يوجد تداخل بين الشفت الصباحي والمسائي في ${_dayName(key)}. عدّل الأوقات قبل الحفظ.', 'کاتەکانی دوو شیفتەکە یەکتریان دەگرن.', 'Morning and evening shifts overlap on ${_dayName(key)}. Adjust the times before saving.'))));
@@ -404,6 +415,8 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
 
     setState(() => _saving = true);
     try {
+      // always_open is an independent override. Keep the real weekly schedule
+      // untouched so turning 24/7 off restores exactly what the merchant saved.
       final workingHours = _shiftMode == 1
           ? _weeklyJson(_days)
           : <String, dynamic>{
@@ -431,16 +444,28 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
       );
       final morningDefault = _firstEnabled(_morningDays);
       final eveningDefault = _firstEnabled(_eveningDays);
-      await StoreOperationsRepository.instance.saveShiftConfiguration(
-        shiftMode: _shiftMode,
-        morningStart: morningDefault?.open ?? _morningStart,
-        morningEnd: morningDefault?.close ?? _morningEnd,
-        eveningStart: eveningDefault?.open ?? _eveningStart,
-        eveningEnd: eveningDefault?.close ?? _eveningEnd,
-        morningWeeklyHours: _weeklyJson(_morningDays),
-        eveningWeeklyHours: _weeklyJson(_eveningDays),
+      if (!_alwaysOpen) {
+        await StoreOperationsRepository.instance.saveShiftConfiguration(
+          shiftMode: _shiftMode,
+          morningStart: morningDefault?.open ?? _morningStart,
+          morningEnd: morningDefault?.close ?? _morningEnd,
+          eveningStart: eveningDefault?.open ?? _eveningStart,
+          eveningEnd: eveningDefault?.close ?? _eveningEnd,
+          morningWeeklyHours: _weeklyJson(_morningDays),
+          eveningWeeklyHours: _weeklyJson(_eveningDays),
+        );
+      }
+      await StoreOperationsRepository.instance.saveMerchantDeliveryPreferences(
+        selfDelivery: _selfDelivery,
+        alwaysOpen: _alwaysOpen,
       );
+      if (_shiftMode == 2) {
+        await StoreOperationsRepository.instance.saveMenuMode(_menuMode);
+      }
+      updated['menu_mode'] = _menuMode;
       updated['shift_mode'] = _shiftMode;
+      updated['self_delivery'] = _selfDelivery;
+      updated['always_open'] = _alwaysOpen;
       if (!mounted) return;
       widget.onSaved(updated);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tx('تم حفظ إعدادات تشغيل المتجر.', 'ڕێکخستنەکانی کارکردنی فرۆشگا پاشەکەوت کرا.', 'Store operation settings saved.'))));
@@ -781,6 +806,14 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
           _toggleTile(icon: Icons.delivery_dining_rounded, title: _tx('توصيل للعميل', 'گەیاندن بۆ کڕیار', 'Delivery'), subtitle: _tx('إرسال الطلب إلى عنوان العميل', 'ناردنی داواکاری بۆ ناونیشانی کڕیار', 'Send orders to the customer address'), value: _deliveryAvailable, onChanged: (v) => setState(() => _deliveryAvailable = v)),
           const SizedBox(height: 10),
           _toggleTile(icon: Icons.shopping_bag_outlined, title: _tx('استلام من المتجر', 'وەرگرتن لە فرۆشگا', 'Pickup'), subtitle: _tx('العميل يأتي ويستلم الطلب بنفسه', 'کڕیار خۆی دێت داواکاری وەردەگرێت', 'Customer collects the order at the store'), value: _pickupAvailable, onChanged: (v) => setState(() => _pickupAvailable = v)),
+          const SizedBox(height: 10),
+          _toggleTile(
+            icon: Icons.store_mall_directory_rounded,
+            title: _tx('المتجر يوصّل الطلبات بنفسه', 'فرۆشگا خۆی داواکاری دەگەیەنێت', 'Store delivers orders itself'),
+            subtitle: _tx('لا يحتاج حساب سائق، ويظهر زر تم التسليم للطلبات الجاهزة غير المسندة لسائق.', 'پێویستی بە هەژماری شۆفێر نییە.', 'No driver account is needed; ready unassigned orders can be marked delivered by the store.'),
+            value: _selfDelivery,
+            onChanged: _deliveryAvailable ? (v) => setState(() => _selfDelivery = v) : (_) {},
+          ),
         ]),
       ),
       const SizedBox(height: 16),
@@ -830,22 +863,37 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
 
   Widget _hoursSection(bool compact) => Column(children: [
     _card(
+      title: _tx('مفتوح دائمًا 24 ساعة', 'هەمیشە کراوە 24 کاتژمێر', 'Always open 24 hours'),
+      subtitle: _tx('إذا فعلته لن تحتاج إلى ترتيب جدول الدوام الأسبوعي. عند إلغائه يعود جدولك المحفوظ كما كان.', 'ئەگەر چالاک بکرێت پێویست بە خشتەی هەفتانە نییە.', 'When enabled, weekly hours are ignored. Turning it off restores your saved schedule.'),
+      icon: Icons.all_inclusive_rounded,
+      child: _toggleTile(
+        icon: Icons.schedule_rounded,
+        title: _alwaysOpen ? _tx('المتجر مفتوح 24/7', 'فرۆشگا 24/7 کراوەیە', 'Store is open 24/7') : _tx('استخدام جدول الدوام', 'بەکارهێنانی خشتەی کار', 'Use weekly schedule'),
+        subtitle: _tx('هذا الخيار لا يحذف أوقات الدوام المحفوظة.', 'کاتە پاشەکەوتکراوەکان ناسڕێتەوە.', 'Saved working hours are not deleted.'),
+        value: _alwaysOpen,
+        onChanged: (v) => setState(() { _alwaysOpen = v; if (v) _isOpen = true; }),
+      ),
+    ),
+    const SizedBox(height: 16),
+    _card(
       title: _tx('حالة المتجر الآن', 'دۆخی ئێستای فرۆشگا', 'Store status now'),
       subtitle: _tx('يمكنك إيقاف استقبال الطلبات مؤقتًا بدون تغيير جدول الدوام.', 'دەتوانیت کاتی وەرگرتنی داواکاری بوەستێنیت بەبێ گۆڕینی خشتە.', 'Pause orders temporarily without changing the weekly schedule.'),
       icon: Icons.store_mall_directory_outlined,
       child: _toggleTile(icon: _isOpen ? Icons.storefront_rounded : Icons.store_mall_directory_outlined, title: _isOpen ? _tx('المتجر مفتوح ويستقبل الطلبات', 'فرۆشگا کراوەیە', 'Store is accepting orders') : _tx('المتجر مغلق مؤقتًا', 'فرۆشگا کاتی داخراوە', 'Store temporarily closed'), subtitle: _tx('هذا المفتاح لا يغيّر أيام العطلة الأسبوعية.', 'ئەم دوگمەیە ڕۆژانی پشوو ناگۆڕێت.', 'This does not change weekly days off.'), value: _isOpen, onChanged: (v) => setState(() => _isOpen = v)),
     ),
-    const SizedBox(height: 16),
-    _shiftSettingsCard(compact),
-    const SizedBox(height: 16),
-    if (_shiftMode == 1)
+    if (!_alwaysOpen) ...[
+      const SizedBox(height: 16),
+      _shiftSettingsCard(compact),
+      const SizedBox(height: 16),
+    ],
+    if (!_alwaysOpen && _shiftMode == 1)
       _card(
         title: _tx('جدول الدوام الأسبوعي', 'خشتەی هەفتانەی کار', 'Weekly working hours'),
         subtitle: _tx('فعّل أيام العمل وحدد وقت الفتح والإغلاق. عطّل اليوم إذا كان عطلة.', 'ڕۆژانی کار چالاک بکە و کاتی کردنەوە/داخستن دیاری بکە.', 'Enable working days and set open/close times. Disable a day to mark it off.'),
         icon: Icons.calendar_month_outlined,
         child: Column(children: _dayKeys.map((key) => _dayRowFor(_days, key, compact)).toList()),
       )
-    else ...[
+    else if (!_alwaysOpen) ...[
       _shiftWeeklyCard('morning', compact),
       const SizedBox(height: 16),
       _shiftWeeklyCard('evening', compact),
@@ -854,7 +902,7 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
 
   Widget _shiftSettingsCard(bool compact) => _card(
     title: _tx('نظام الشفتات', 'سیستەمی شیفت', 'Shift system'),
-    subtitle: _tx('إذا عندك منيو صباحي ومسائي فعّل شفتين. إذا عندك منيو واحد اترك شفت واحد.', 'ئەگەر دوو منیو هەیە دوو شیفت هەڵبژێرە.', 'Choose two shifts only when the store has separate morning and evening menus.'),
+    subtitle: _tx('حدد عدد الشفتات بشكل مستقل عن نوع المنيو.', 'ژمارەی شیفتەکان بە جیا دیاری بکە.', 'Choose the number of shifts independently of the menu type.'),
     icon: Icons.schedule_rounded,
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       SegmentedButton<int>(
@@ -866,6 +914,22 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
         onSelectionChanged: (value) => setState(() => _shiftMode = value.first),
       ),
       if (_shiftMode == 2) ...[
+        const SizedBox(height: 12),
+        Text(_tx('نوع المنيو للشفتين', 'جۆری منیو بۆ دوو شیفت', 'Menu type for both shifts'), style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: [
+            ButtonSegment(value: 'unified', label: Text(_tx('منيو موحّد', 'مینیوی یەکگرتوو', 'Unified menu'))),
+            ButtonSegment(value: 'different', label: Text(_tx('منيو مختلف', 'مینیوی جیاواز', 'Separate menus'))),
+          ],
+          selected: {_menuMode},
+          onSelectionChanged: (value) => setState(() => _menuMode = value.first),
+        ),
+        const SizedBox(height: 8),
+        Text(_menuMode == 'unified'
+          ? _tx('كل الأصناف المتاحة تظهر بالشفتين، مع احترام أوقات كل شفت.', 'هەموو بەرهەمەکان لە هەردوو شیفتدا پیشان دەدرێن.', 'All available items appear in both shifts; working hours stay separate.')
+          : _tx('كل شفت يعرض الأصناف والأقسام المرتبطة به فقط.', 'هەر شیفت بەرهەمە تایبەتەکانی خۆی پیشان دەدات.', 'Each shift shows only its assigned items and categories.'),
+          style: const TextStyle(color: AppColors.muted, fontSize: 12)),
         const SizedBox(height: 12),
         Text(_tx('لكل شفت جدول أسبوعي مستقل بالأسفل. يمكن تشغيل شفت واحد فقط في يوم معيّن، أو تشغيل الاثنين بأوقات غير متداخلة.', 'هەر شیفتێک خشتەی هەفتانەی جیاواز هەیە.', 'Each shift has its own weekly schedule below. You can run one or both shifts on a day as long as their times do not overlap.'), style: const TextStyle(color: AppColors.muted, fontSize: 12, height: 1.4)),
       ],
@@ -927,6 +991,14 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
     final picked = await showTimePicker(
       context: context,
       initialTime: TimeOfDay(hour: int.tryParse(pieces.first) ?? (opening ? 9 : 23), minute: pieces.length > 1 ? int.tryParse(pieces[1]) ?? 0 : 0),
+      // Only the single-shift editor uses a 12-hour picker with AM/PM.
+      // Two-shift controls retain their existing picker behavior.
+      builder: _shiftMode == 1
+          ? (pickerContext, child) => MediaQuery(
+                data: MediaQuery.of(pickerContext).copyWith(alwaysUse24HourFormat: false),
+                child: child!,
+              )
+          : null,
     );
     if (!mounted || picked == null) return;
     final formatted = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';

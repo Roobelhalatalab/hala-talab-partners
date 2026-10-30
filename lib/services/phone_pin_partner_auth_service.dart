@@ -97,6 +97,32 @@ class PhonePinPartnerAuthService {
     }
   }
 
+  static Future<void> changePin({
+    required String rawPhone,
+    required String role,
+    required String currentPin,
+    required String newPin,
+  }) async {
+    final phone = normalizeIraqiPhone(rawPhone);
+    if (!RegExp(r'^\d{4}$').hasMatch(currentPin)) throw const FormatException('INVALID_PIN');
+    if (!RegExp(r'^\d{4}$').hasMatch(newPin)) throw const FormatException('INVALID_PIN');
+    final normalizedRole = role == 'driver' ? 'driver' : 'business';
+    final response = await _client.functions.invoke(
+      'phone-pin-auth',
+      body: {
+        'action': 'change_pin',
+        'phone': phone,
+        'role': normalizedRole,
+        'current_pin': currentPin,
+        'new_pin': newPin,
+      },
+    );
+    final data = _asMap(response.data);
+    if (response.status < 200 || response.status >= 300 || data['ok'] != true) {
+      throw StateError(_errorCode(data));
+    }
+  }
+
   static Future<PhonePinPartnerAuthResult> _invoke({
     required String action,
     required String rawPhone,
