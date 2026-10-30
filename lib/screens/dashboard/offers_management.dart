@@ -11,13 +11,14 @@ class _OffersManagementPageState extends State<_OffersManagementPage> with Singl
   late final TabController _tabs;
   List<Map<String, dynamic>> _offers = const [];
   List<Map<String, dynamic>> _coupons = const [];
+  List<Map<String, dynamic>> _productOffers = const [];
   bool _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _tabs = TabController(length: 3, vsync: this);
     _load();
   }
 
@@ -33,11 +34,13 @@ class _OffersManagementPageState extends State<_OffersManagementPage> with Singl
       final data = await Future.wait([
         OffersRepository.instance.getPromotions(),
         OffersRepository.instance.getCoupons(),
+        OffersRepository.instance.getProductOffers(),
       ]);
       if (!mounted) return;
       setState(() {
         _offers = data[0];
         _coupons = data[1];
+        _productOffers = data[2];
       });
     } on PostgrestException catch (error) {
       if (!mounted) return;
@@ -54,6 +57,27 @@ class _OffersManagementPageState extends State<_OffersManagementPage> with Singl
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppStrings.of(context).t('offerSaved'))));
       await _load();
     }
+  }
+
+  Future<void> _editProductOffer([Map<String, dynamic>? item]) async {
+    final saved = await showDialog<bool>(context: context, barrierDismissible: false,
+      builder: (_) => _ProductOfferEditorDialog(item: item));
+    if (saved == true && mounted) await _load();
+  }
+
+  Future<void> _deleteProductOffer(Map<String, dynamic> item) async {
+    if (!await _confirm('حذف عرض المنتجات', 'هل تريد حذف هذا العرض نهائياً؟')) return;
+    try {
+      await OffersRepository.instance.deleteProductOffer(item['id'].toString());
+      await _load();
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حذف العرض: $error')));
+    }
+  }
+
+  Future<void> _toggleProductOffer(Map<String, dynamic> item, bool active) async {
+    await OffersRepository.instance.setProductOfferActive(item['id'].toString(), active);
+    await _load();
   }
 
   Future<void> _editCoupon([Map<String, dynamic>? item]) async {
@@ -129,7 +153,7 @@ class _OffersManagementPageState extends State<_OffersManagementPage> with Singl
               indicator: BoxDecoration(color: const Color(0xFFFFF0E5), borderRadius: BorderRadius.circular(14)),
               labelColor: AppColors.orangeDark,
               unselectedLabelColor: AppColors.muted,
-              tabs: [Tab(text: t.t('promotionsTab'), icon: compact ? null : const Icon(Icons.local_offer_rounded)), Tab(text: t.t('couponsTab'), icon: compact ? null : const Icon(Icons.confirmation_number_rounded))],
+              tabs: [Tab(text: t.t('promotionsTab'), icon: compact ? null : const Icon(Icons.local_offer_rounded)), Tab(text: 'عروض المنتجات', icon: compact ? null : const Icon(Icons.shopping_bag_outlined)), Tab(text: t.t('couponsTab'), icon: compact ? null : const Icon(Icons.confirmation_number_rounded))],
             ),
           ),
           const SizedBox(height: 14),
@@ -139,6 +163,7 @@ class _OffersManagementPageState extends State<_OffersManagementPage> with Singl
               ? _ProductsErrorState(message: _error!, onRetry: _load)
               : TabBarView(controller: _tabs, children: [
                   _OfferList(items: _offers, onAdd: () => _editOffer(), onEdit: _editOffer, onDelete: _deleteOffer, onToggle: _toggleOffer),
+                  _ProductOfferList(items: _productOffers, onAdd: () => _editProductOffer(), onEdit: _editProductOffer, onToggle: _toggleProductOffer, onDelete: _deleteProductOffer),
                   _CouponList(items: _coupons, onAdd: () => _editCoupon(), onEdit: _editCoupon, onDelete: _deleteCoupon, onToggle: _toggleCoupon),
                 ])),
         ]),
@@ -275,3 +300,279 @@ class _CouponEditorDialogState extends State<_CouponEditorDialog> {
 String _txCampaign(BuildContext context,String ar,String ku,String en){final code=Localizations.localeOf(context).languageCode.toLowerCase();if(code.startsWith('ku'))return ku;if(code.startsWith('en'))return en;return ar;}
 
 String _date(DateTime value) => '${value.year}-${value.month.toString().padLeft(2,'0')}-${value.day.toString().padLeft(2,'0')}';
+
+
+// Note 4: independent product offers. General offers and coupon editors stay unchanged.
+class _ProductOfferList extends StatelessWidget {
+  const _ProductOfferList({required this.items, required this.onAdd, required this.onEdit, required this.onToggle, required this.onDelete});
+  final List<Map<String, dynamic>> items;
+  final VoidCallback onAdd;
+  final ValueChanged<Map<String, dynamic>> onEdit;
+  final void Function(Map<String, dynamic>, bool) onToggle;
+  final ValueChanged<Map<String, dynamic>> onDelete;
+  String _discountLabel(Map<String, dynamic> offer) {
+    final type = offer['discount_type']?.toString();
+    final value = offer['discount_value']?.toString() ?? '';
+    if (type == 'percentage') return 'خصم $value%';
+    if (type == 'fixed') return 'خصم $value دينار';
+    return 'السعر النهائي $value دينار';
+  }
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Align(alignment: AlignmentDirectional.centerEnd,
+      child: FilledButton.icon(onPressed: onAdd, icon: const Icon(Icons.add), label: const Text('إضافة عرض منتجات'))),
+    const SizedBox(height: 12),
+    Expanded(child: items.isEmpty
+      ? const Center(child: Text('ماكو عروض منتجات حالياً'))
+      : ListView.builder(itemCount: items.length, itemBuilder: (context, index) {
+          final offer = items[index];
+          final products = offer['product_ids'];
+          final count = products is List ? products.length : 0;
+          return Card(child: ListTile(
+            title: Text(offer['title']?.toString() ?? ''),
+            subtitle: Text('$count أصناف • ${_discountLabel(offer)}'),
+            onTap: () => onEdit(offer),
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit_outlined), onPressed: () => onEdit(offer)),
+              IconButton(tooltip: 'حذف', icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => onDelete(offer)),
+              Switch.adaptive(value: offer['is_active'] == true, onChanged: (value) => onToggle(offer, value)),
+            ]),
+          ));
+        })),
+  ]);
+}
+
+class _ProductOfferEditorDialog extends StatefulWidget {
+  const _ProductOfferEditorDialog({this.item});
+  final Map<String, dynamic>? item;
+  @override
+  State<_ProductOfferEditorDialog> createState() => _ProductOfferEditorDialogState();
+}
+
+class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
+  final _title = TextEditingController();
+  final _value = TextEditingController();
+  List<Map<String, dynamic>> _products = [];
+  List<Map<String, dynamic>> _categories = [];
+  String? _openCategoryId;
+  final Set<String> _selected = {};
+  String _type = 'percentage';
+  DateTime _start = DateTime.now();
+  DateTime _end = DateTime.now().add(const Duration(days: 7));
+  bool _active = true, _loading = true, _saving = false;
+  String? _error;
+  PlatformFile? _offerImage;
+  String? _offerImageUrl, _offerImagePath;
+  bool _removeOfferImage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final item = widget.item;
+    if (item != null) {
+      _offerImageUrl = item['image_url']?.toString();
+      _offerImagePath = item['image_path']?.toString();
+      _title.text = item['title']?.toString() ?? '';
+      _value.text = item['discount_value']?.toString() ?? '';
+      _type = item['discount_type']?.toString() ?? 'percentage';
+      _active = item['is_active'] == true;
+      _start = DateTime.tryParse(item['start_at']?.toString() ?? '')?.toLocal() ?? _start;
+      _end = DateTime.tryParse(item['end_at']?.toString() ?? '')?.toLocal() ?? _end;
+      if (item['product_ids'] is List) {
+        _selected.addAll((item['product_ids'] as List).map((e) => e.toString()));
+      }
+    }
+    _loadProducts();
+  }
+
+  Future<void> _loadProducts() async {
+    try {
+      final results = await Future.wait([
+        ProductsRepository.instance.getStoreProducts(),
+        ProductsRepository.instance.getStoreCategories(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _products = results[0];
+          _categories = results[1];
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _chooseDate(bool start) async {
+    final current = start ? _start : _end;
+    final date = await showDatePicker(context: context, firstDate: DateTime(2020),
+      lastDate: DateTime(2100), initialDate: current);
+    if (date != null && mounted) {
+      setState(() {
+        if (start) { _start = date; } else { _end = date.add(const Duration(hours: 23, minutes: 59)); }
+      });
+    }
+  }
+
+  Future<void> _pickOfferImage() async {
+    final photo = await pickPartnerPhotoWithCamera(context);
+    if (photo != null && mounted) setState(() { _offerImage = photo; _removeOfferImage = false; });
+  }
+
+  Future<void> _save() async {
+    final value = double.tryParse(_value.text.trim());
+    if (_title.text.trim().isEmpty || _selected.isEmpty || value == null || value < 0 ||
+        (_type == 'percentage' && (value <= 0 || value > 100)) ||
+        (_type == 'fixed' && value <= 0) || !_end.isAfter(_start)) {
+      setState(() => _error = 'تأكد من الاسم والأصناف وقيمة الخصم والتواريخ');
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    try {
+      var imageUrl = _removeOfferImage ? null : _offerImageUrl;
+      var imagePath = _removeOfferImage ? null : _offerImagePath;
+      if (_offerImage?.bytes != null) {
+        final uploaded = await OffersRepository.instance.uploadCampaignImage(
+          bytes: _offerImage!.bytes!, extension: _offerImage!.extension ?? 'jpg');
+        imageUrl = uploaded['url'];
+        imagePath = uploaded['path'];
+      }
+      await OffersRepository.instance.saveProductOffer(
+        offerId: widget.item?['id']?.toString(), title: _title.text,
+        productIds: _selected.toList(), discountType: _type,
+        discountValue: value, startAt: _start, endAt: _end, isActive: _active,
+        imageUrl: imageUrl, imagePath: imagePath);
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _deleteCurrentOffer() async {
+    final id = widget.item?['id']?.toString();
+    if (id == null || _saving) return;
+    final confirmed = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+      title: const Text('حذف عرض المنتجات'),
+      content: const Text('هل تريد حذف هذا العرض نهائياً؟'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
+        TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('حذف', style: TextStyle(color: Colors.red))),
+      ],
+    )) ?? false;
+    if (!confirmed || !mounted) return;
+    setState(() { _saving = true; _error = null; });
+    try {
+      await OffersRepository.instance.deleteProductOffer(id);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) setState(() { _error = error.toString(); _saving = false; });
+    }
+  }
+
+  @override
+  void dispose() { _title.dispose(); _value.dispose(); super.dispose(); }
+
+  Widget _offerProductCheckbox(Map<String, dynamic> product) {
+    final id = product['id']?.toString() ?? '';
+    return CheckboxListTile(
+      dense: true,
+      title: Text(product['name']?.toString() ?? ''),
+      subtitle: Text('السعر: ${product['price'] ?? ''}'),
+      value: _selected.contains(id),
+      onChanged: (checked) => setState(() {
+        if (checked == true) { _selected.add(id); } else { _selected.remove(id); }
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.item == null ? 'إضافة عرض منتجات' : 'تعديل عرض المنتجات'),
+    content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(
+      mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(onTap: _saving ? null : _pickOfferImage, child: Container(
+          height: 150, clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(color: const Color(0xFFFFFAF6), borderRadius: BorderRadius.circular(14)),
+          child: _offerImage?.bytes != null
+            ? Image.memory(_offerImage!.bytes!, fit: BoxFit.cover)
+            : (_offerImageUrl ?? '').isNotEmpty && !_removeOfferImage
+              ? PersistentNetworkImage(url: _offerImageUrl!, fit: BoxFit.cover,
+                  placeholder: const Center(child: CircularProgressIndicator()),
+                  errorBuilder: (_, _, _) => const Center(child: Icon(Icons.add_photo_alternate_outlined)))
+              : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.add_a_photo_outlined, size: 35), Text('صورة العرض: الاستوديو أو الكاميرا')]),
+        )),
+        if (_offerImage != null || ((_offerImageUrl ?? '').isNotEmpty && !_removeOfferImage))
+          TextButton.icon(onPressed: () => setState(() {
+            _offerImage = null; _offerImageUrl = null; _removeOfferImage = true;
+          }), icon: const Icon(Icons.delete_outline), label: const Text('إزالة صورة العرض')),
+        TextField(controller: _title, decoration: const InputDecoration(labelText: 'عنوان العرض')),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(initialValue: _type,
+          decoration: const InputDecoration(labelText: 'نوع الخصم'),
+          items: const [
+            DropdownMenuItem(value: 'percentage', child: Text('نسبة مئوية')),
+            DropdownMenuItem(value: 'fixed', child: Text('مبلغ خصم ثابت')),
+            DropdownMenuItem(value: 'final_price', child: Text('سعر نهائي للصنف')),
+          ], onChanged: (value) { if (value != null) setState(() => _type = value); }),
+        TextField(controller: _value, keyboardType: TextInputType.number,
+          decoration: InputDecoration(labelText: _type == 'final_price' ? 'السعر بعد الخصم' : 'قيمة الخصم')),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, children: [
+          OutlinedButton(onPressed: () => _chooseDate(true), child: Text('من ${_start.year}/${_start.month}/${_start.day}')),
+          OutlinedButton(onPressed: () => _chooseDate(false), child: Text('إلى ${_end.year}/${_end.month}/${_end.day}')),
+        ]),
+        SwitchListTile(title: const Text('العرض فعال'), value: _active,
+          onChanged: (value) => setState(() => _active = value)),
+        const Text('اختر الأصناف المشمولة بالعرض', style: TextStyle(fontWeight: FontWeight.bold)),
+        const Text('إذا اخترت صنفاً واحداً ينطبق الخصم على كل قطعة. وإذا اخترت عدة أصناف فهي مجموعة كومبو ولا يكتمل الخصم إلا بوجود جميع الأصناف معاً. تكرار المجموعة يكرر الخصم.', style: TextStyle(fontSize: 12)),
+        if (_loading) const LinearProgressIndicator(),
+        if (!_loading && _products.isEmpty) const Text('ماكو أصناف متاحة'),
+        if (!_loading) SizedBox(height: 290, child: ListView(
+          children: [
+            for (final category in _categories) ...[
+              Builder(builder: (context) {
+                final categoryId = category['id']?.toString() ?? '';
+                final categoryProducts = _products.where((product) =>
+                  product['category_id']?.toString() == categoryId).toList();
+                if (categoryProducts.isEmpty) return const SizedBox.shrink();
+                final isOpen = _openCategoryId == categoryId;
+                return Column(children: [
+                  ListTile(
+                    title: Text(category['name']?.toString() ?? 'قسم'),
+                    subtitle: Text('${categoryProducts.length} أصناف'),
+                    trailing: Icon(isOpen ? Icons.expand_less : Icons.expand_more),
+                    onTap: () => setState(() => _openCategoryId = isOpen ? null : categoryId),
+                  ),
+                  if (isOpen) for (final product in categoryProducts)
+                    _offerProductCheckbox(product),
+                ]);
+              }),
+            ],
+            if (_categories.isEmpty || _products.any((product) =>
+                product['category_id'] == null ||
+                !_categories.any((category) => category['id']?.toString() == product['category_id']?.toString()))) ...[
+              const ListTile(title: Text('أصناف بدون قسم')),
+              for (final product in _products.where((product) =>
+                product['category_id'] == null ||
+                !_categories.any((category) => category['id']?.toString() == product['category_id']?.toString())))
+                _offerProductCheckbox(product),
+            ],
+          ],
+        )),
+        if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
+      ],
+    ))),
+    actions: [
+      if (widget.item != null) TextButton.icon(
+        onPressed: _saving ? null : _deleteCurrentOffer,
+        icon: const Icon(Icons.delete_outline, color: Colors.red),
+        label: const Text('حذف العرض', style: TextStyle(color: Colors.red))),
+      TextButton(onPressed: _saving ? null : () => Navigator.pop(context, false), child: const Text('إلغاء')),
+      FilledButton(onPressed: _saving || _loading ? null : _save, child: const Text('حفظ العرض')),
+    ],
+  );
+}

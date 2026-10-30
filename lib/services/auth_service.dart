@@ -675,6 +675,110 @@ class AuthService {
     return _client.from('stores').update(values).eq('owner_id', userId).select().single();
   }
 
+  // Enrich the order for display/printing only. Do not modify persisted
+  // order items or the price/fulfilment flow.
+  // Snapshot-first: preserve the product description from order time.
+  // Legacy orders without a snapshot fall back to the current product description.
+  Future<void> _attachProductDescriptions(List<Map<String, dynamic>> orders) async {
+    final ids = <String>{};
+    for (final order in orders) {
+      final originals = order['order_items'] as List? ?? const [];
+      order['order_items'] = originals.map((raw) {
+        final item = Map<String, dynamic>.from(raw as Map);
+        final saved = item['product_description']?.toString().trim() ?? '';
+        if (saved.isNotEmpty) {
+          item['display_product_description'] = saved;
+        } else if (item['product_id'] != null) {
+          ids.add(item['product_id'].toString());
+        }
+        return item;
+      }).toList();
+    }
+    if (ids.isEmpty) return;
+    // Snapshot titles remain available even when the original offer is deleted.
+    for (final order in orders) {
+      final rawItems = order['order_items'] as List? ?? const [];
+      order['order_items'] = rawItems.map((raw) {
+        final item = Map<String, dynamic>.from(raw as Map);
+        final snapshot = (item['combo_title_snapshot']?.toString() ?? '').trim();
+        if (snapshot.isNotEmpty) item['display_combo_title'] = snapshot;
+        return item;
+      }).toList();
+    }
+    try {
+      final products = await _client.from('products')
+          .select('id,description,notes').inFilter('id', ids.toList());
+      final byId = <String, Map<String, dynamic>>{
+        for (final raw in products)
+          if (raw['id'] != null) raw['id'].toString(): Map<String, dynamic>.from(raw),
+      };
+      for (final order in orders) {
+        final originals = order['order_items'] as List? ?? const [];
+        order['order_items'] = originals.map((raw) {
+          final item = Map<String, dynamic>.from(raw as Map);
+          if ((item['display_product_description']?.toString() ?? '').trim().isNotEmpty) return item;
+          final product = byId[item['product_id']?.toString()];
+          final description = product?['description']?.toString().trim() ?? '';
+          final note = product?['notes']?.toString().trim() ?? '';
+          final value = description.isNotEmpty ? description : note;
+          if (value.isNotEmpty) item['display_product_description'] = value;
+          return item;
+        }).toList();
+      }
+    } catch (error) {
+      debugPrint('Optional legacy product description lookup unavailable: $error');
+    }
+  }
+
+  // Optional offer-title enrichment. Display only; never changes order totals.
+  Future<void> _attachComboTitles(List<Map<String, dynamic>> orders) async {
+    final ids = <String>{};
+    for (final order in orders) {
+      for (final raw in (order['order_items'] as List? ?? const [])) {
+        if (raw is Map && raw['product_offer_id'] != null) {
+          ids.add(raw['product_offer_id'].toString());
+        }
+      }
+    }
+    if (ids.isEmpty) return;
+    // Snapshot titles remain available even when the original offer is deleted.
+    for (final order in orders) {
+      final rawItems = order['order_items'] as List? ?? const [];
+      order['order_items'] = rawItems.map((raw) {
+        final item = Map<String, dynamic>.from(raw as Map);
+        final snapshot = (item['combo_title_snapshot']?.toString() ?? '').trim();
+        if (snapshot.isNotEmpty) item['display_combo_title'] = snapshot;
+        return item;
+      }).toList();
+    }
+    try {
+      final rows = await _client.from('store_product_offers')
+          .select('id,title').inFilter('id', ids.toList());
+      final titles = <String, String>{
+        for (final row in rows)
+          if (row['id'] != null)
+            row['id'].toString(): (row['title']?.toString().trim() ?? ''),
+      };
+      for (final order in orders) {
+        final rawItems = order['order_items'] as List? ?? const [];
+        order['order_items'] = rawItems.map((raw) {
+          final item = Map<String, dynamic>.from(raw as Map);
+          final id = item['product_offer_id']?.toString();
+          final savedTitle = item['combo_title_snapshot']?.toString().trim() ?? '';
+          if (savedTitle.isNotEmpty) {
+            item['display_combo_title'] = savedTitle;
+          } else if (id != null && (titles[id] ?? '').isNotEmpty) {
+            item['display_combo_title'] = titles[id];
+          }
+          return item;
+        }).toList();
+      }
+    } catch (error) {
+      // Legacy database or unavailable read permissions: keep orders usable.
+      debugPrint('Optional combo title lookup unavailable: $error');
+    }
+  }
+
   Future<Map<String, dynamic>?> getStoreOrderById(String orderId) async {
     final store = await getCurrentStore();
     final storeId = store?['id'] as String?;
@@ -685,7 +789,11 @@ class AuthService {
         .eq('id', orderId)
         .eq('store_id', storeId)
         .maybeSingle();
-    return data == null ? null : Map<String, dynamic>.from(data);
+    if (data == null) return null;
+    final order = Map<String, dynamic>.from(data);
+    await _attachProductDescriptions([order]);
+    await _attachComboTitles([order]);
+    return order;
   }
 
   Future<List<Map<String, dynamic>>> getStoreOrders() async {
@@ -697,7 +805,10 @@ class AuthService {
         .select('*, order_items(*)')
         .eq('store_id', storeId)
         .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(data);
+    final orders = List<Map<String, dynamic>>.from(data);
+    await _attachProductDescriptions(orders);
+    await _attachComboTitles(orders);
+    return orders;
   }
 
   Future<Map<String, dynamic>> updateOrderStatus({

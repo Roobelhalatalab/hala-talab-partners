@@ -1530,6 +1530,23 @@ class _OrderDetailsDialog extends StatelessWidget {
     final items = List<Map<String, dynamic>>.from(
       order['order_items'] as List? ?? const [],
     );
+    // Group only items with a persisted offer ID. Ordinary/legacy items keep
+    // their original display order and are never inferred to be part of a combo.
+    final groupedItems = <Map<String, dynamic>>[];
+    final comboGroups = <String, List<Map<String, dynamic>>>{};
+    for (final item in items) {
+      final offerId = item['product_offer_id']?.toString() ?? '';
+      if (offerId.isEmpty) {
+        groupedItems.add(item);
+      } else {
+        if (!comboGroups.containsKey(offerId)) {
+          final group = <Map<String, dynamic>>[];
+          comboGroups[offerId] = group;
+          groupedItems.add({'_combo_group': group, '_combo_offer_id': offerId});
+        }
+        comboGroups[offerId]!.add(item);
+      }
+    }
     final total = (order['total'] as num?)?.toDouble() ?? 0;
     final isPickup = _isPickupOrder(order);
     return AlertDialog(
@@ -1593,7 +1610,81 @@ class _OrderDetailsDialog extends StatelessWidget {
                   style: const TextStyle(color: AppColors.muted),
                 )
               else
-                ...items.map((item) {
+                ...groupedItems.map((item) {
+                  final group = item['_combo_group'];
+                  if (group is List<Map<String, dynamic>> && group.isNotEmpty) {
+                    final rawTitle = (group.first['combo_title_snapshot'] ?? group.first['display_combo_title'])?.toString().trim() ?? '';
+                    final label = rawTitle.isEmpty ? 'عرض كومبو' : rawTitle;
+                    final savedTotal = group.fold<double>(0, (sum, line) {
+                      final qty = (line['quantity'] as num?)?.toDouble() ?? 0;
+                      final unit = (line['unit_price'] as num?)?.toDouble() ?? 0;
+                      return sum + qty * unit;
+                    });
+                    final originalTotal = group.fold<double>(0, (sum, line) {
+                      final qty = (line['quantity'] as num?)?.toDouble() ?? 0;
+                      final unit = (line['unit_price'] as num?)?.toDouble() ?? 0;
+                      final original = (line['original_unit_price'] as num?)?.toDouble() ?? unit;
+                      return sum + qty * (original > unit ? original : unit);
+                    });
+                    final discount = originalTotal - savedTotal;
+                    // Do not guess the number of complete bundles from line quantities:
+                    // that requires the saved offer composition / explicit bundle count.
+                    final rawCount = group.first['combo_count'];
+                    final count = rawCount is num && rawCount > 0 ? rawCount.toInt() : null;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF6EE),
+                        border: Border.all(color: const Color(0xFFF2CDAF)),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(count == null ? label : '$label ×$count',
+                            style: const TextStyle(fontWeight: FontWeight.w900,
+                              color: AppColors.orangeDark)),
+                          const SizedBox(height: 8),
+                          ...group.map((line) {
+                            final qty = (line['quantity'] as num?)?.toInt() ?? 1;
+                            final unit = (line['unit_price'] as num?)?.toDouble() ?? 0;
+                            final note = line['notes']?.toString().trim() ?? '';
+                            final description = line['display_product_description']?.toString().trim() ?? '';
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 7),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(children: [
+                                    Expanded(child: Text('$qty × ${orderItemDisplayName(line)}',
+                                      style: const TextStyle(fontWeight: FontWeight.w700))),
+                                    Text('${(qty * unit).toStringAsFixed(0)} د.ع'),
+                                  ]),
+                                  if (description.isNotEmpty)
+                                    Text(description, style: const TextStyle(
+                                      color: AppColors.muted, fontSize: 12)),
+                                  if (note.isNotEmpty)
+                                    Text('ملاحظة العميل: $note', style: const TextStyle(
+                                      color: AppColors.orangeDark, fontSize: 12)),
+                                ],
+                              ),
+                            );
+                          }),
+                          const Divider(),
+                          if (discount > 0) ...[
+                            Text('${originalTotal.toStringAsFixed(0)} د.ع',
+                              style: const TextStyle(decoration: TextDecoration.lineThrough,
+                                color: AppColors.muted)),
+                            Text('خصم ${discount.toStringAsFixed(0)} د.ع',
+                              style: const TextStyle(color: AppColors.orangeDark)),
+                          ],
+                          Text('بعد الخصم: ${savedTotal.toStringAsFixed(0)} د.ع',
+                            style: const TextStyle(fontWeight: FontWeight.w900)),
+                        ],
+                      ),
+                    );
+                  }
                   final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
                   final unitPrice =
                       (item['unit_price'] as num?)?.toDouble() ?? 0;
@@ -1627,6 +1718,17 @@ class _OrderDetailsDialog extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if ((item['display_combo_title']?.toString() ?? '').isNotEmpty) ...[
+                                Text(
+                                  item['display_combo_title'].toString(),
+                                  style: const TextStyle(
+                                    color: AppColors.orangeDark,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                              ],
                               Text(
                                 orderItemDisplayName(item),
                                 style: const TextStyle(fontWeight: FontWeight.w900),
@@ -1649,6 +1751,13 @@ class _OrderDetailsDialog extends StatelessWidget {
                                     fontSize: 12,
                                     fontWeight: FontWeight.w800,
                                   ),
+                                ),
+                              ],
+                              if ((item['display_product_description']?.toString() ?? '').trim().isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  item['display_product_description'].toString().trim(),
+                                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
                                 ),
                               ],
                               if ((item['notes']?.toString() ?? '').trim().isNotEmpty) ...[

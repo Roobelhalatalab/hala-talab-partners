@@ -991,6 +991,14 @@ class _StoreOperationsSettingsPageState extends State<_StoreOperationsSettingsPa
     final picked = await showTimePicker(
       context: context,
       initialTime: TimeOfDay(hour: int.tryParse(pieces.first) ?? (opening ? 9 : 23), minute: pieces.length > 1 ? int.tryParse(pieces[1]) ?? 0 : 0),
+      // Only the single-shift editor uses a 12-hour picker with AM/PM.
+      // Two-shift controls retain their existing picker behavior.
+      builder: _shiftMode == 1
+          ? (pickerContext, child) => MediaQuery(
+                data: MediaQuery.of(pickerContext).copyWith(alwaysUse24HourFormat: false),
+                child: child!,
+              )
+          : null,
     );
     if (!mounted || picked == null) return;
     final formatted = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';

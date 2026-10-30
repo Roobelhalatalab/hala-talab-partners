@@ -102,6 +102,67 @@ class OffersRepository {
     await _client.from('store_promotions').delete().eq('id', id).eq('store_id', storeId);
   }
 
+  // Note 4: product-specific offers live in a separate table. Existing
+  // store_promotions (general offers) and coupons are intentionally untouched.
+  Future<List<Map<String, dynamic>>> getProductOffers() async {
+    final storeId = await _storeId();
+    if (storeId == null || storeId.isEmpty) return const [];
+    final rows = await _client.from('store_product_offers').select()
+        .eq('store_id', storeId).order('created_at', ascending: false);
+    return List<Map<String, dynamic>>.from(rows);
+  }
+
+  Future<Map<String, dynamic>> saveProductOffer({
+    String? offerId,
+    required String title,
+    required List<String> productIds,
+    required String discountType,
+    required double discountValue,
+    required DateTime startAt,
+    required DateTime endAt,
+    required bool isActive,
+    String? imageUrl,
+    String? imagePath,
+  }) async {
+    final storeId = await _requireStoreId();
+    final ids = productIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList();
+    if (title.trim().isEmpty || ids.isEmpty ||
+        !const {'percentage', 'fixed', 'final_price'}.contains(discountType) ||
+        discountValue < 0 || (discountType == 'percentage' && discountValue > 100) ||
+        !endAt.isAfter(startAt)) {
+      throw const FormatException('Invalid product offer');
+    }
+    final values = <String, dynamic>{
+      'store_id': storeId,
+      'title': title.trim(),
+      'product_ids': ids,
+      'discount_type': discountType,
+      'discount_value': discountValue,
+      'start_at': startAt.toUtc().toIso8601String(),
+      'end_at': endAt.toUtc().toIso8601String(),
+      'is_active': isActive,
+      'image_url': imageUrl,
+      'image_path': imagePath,
+    };
+    if (offerId == null) {
+      return _client.from('store_product_offers').insert(values).select().single();
+    }
+    return _client.from('store_product_offers').update(values)
+        .eq('id', offerId).eq('store_id', storeId).select().single();
+  }
+
+  Future<void> deleteProductOffer(String offerId) async {
+    final storeId = await _requireStoreId();
+    await _client.from('store_product_offers').delete()
+        .eq('id', offerId).eq('store_id', storeId);
+  }
+
+  Future<void> setProductOfferActive(String offerId, bool active) async {
+    final storeId = await _requireStoreId();
+    await _client.from('store_product_offers').update({'is_active': active})
+        .eq('id', offerId).eq('store_id', storeId);
+  }
+
   Future<List<Map<String, dynamic>>> getCoupons() async {
     final storeId = await _storeId();
     if (storeId == null || storeId.isEmpty) return const [];
