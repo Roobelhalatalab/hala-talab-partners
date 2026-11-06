@@ -341,6 +341,343 @@ class _StoreSettingsPageState extends State<_StoreSettingsPage> {
     if (result == true) await _updateExtraSettings({'payment_methods': selected.toList()});
   }
 
+  Future<void> _openOrderProductImagesSetting() async {
+    final storeId = widget.store?['id']?.toString();
+    if (storeId == null || storeId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'store_order_product_images_$storeId';
+    bool enabled = prefs.getBool(key) ?? false;
+    if (!mounted) return;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('صور المنتجات في تفاصيل الطلب'),
+          content: SwitchListTile.adaptive(
+            value: enabled,
+            onChanged: (value) => setLocal(() => enabled = value),
+            title: const Text('إظهار صور المنتجات في تفاصيل الطلب'),
+            subtitle: const Text('يعرض صورة المنتج إن كانت متوفرة، ولا يغيّر الفاتورة المطبوعة.'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, enabled), child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+    if (result != null) await prefs.setBool(key, result);
+  }
+
+  Widget _settingsNavTile({required IconData icon, required String title, required String subtitle, required VoidCallback onTap, Color accent = AppColors.orange}) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor))),
+          child: Row(children: [
+            Container(width: 44, height: 44, decoration: BoxDecoration(color: accent.withValues(alpha: .09), borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: accent)),
+            const SizedBox(width: 13),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(subtitle, style: const TextStyle(fontSize: 12, color: AppColors.muted))])),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    final width = MediaQuery.sizeOf(context).width;
+    final compact = width < 760;
+    final storeName = _name.text.trim().isEmpty ? s.t('storeSettingsTitle') : _name.text.trim();
+    final approval = (widget.store?['approval_status'] ?? 'pending').toString();
+    final isApproved = approval == 'approved';
+    final isRejected = approval == 'rejected';
+    final isActive = widget.store?['is_active'] == true;
+    final canOpenStore = isApproved && isActive;
+    final approvalBadgeText = isRejected ? s.t('storeRejected') : isApproved ? s.t('verified') : s.t('underReview');
+    final approvalBadgeIcon = isRejected ? Icons.cancel_rounded : isApproved ? Icons.verified_rounded : Icons.schedule_rounded;
+    final statusTitle = isRejected
+        ? s.t('storeRejected')
+        : isApproved && !isActive
+            ? s.t('storeApprovedInactive')
+            : canOpenStore
+                ? (_isOpen ? s.t('storeOpen') : s.t('storeClosed'))
+                : s.t('storeUnderReview');
+    final statusSubtitle = isRejected
+        ? s.t('rejectedReviewNotice')
+        : isApproved && !isActive
+            ? s.t('approvedActivationNotice')
+            : canOpenStore
+                ? s.t('storeStatusSubtitle')
+                : s.t('pendingApprovalNotice');
+    final docsReady = ((widget.store?['commercial_registration'] ?? '').toString().isNotEmpty && (widget.store?['identity_document'] ?? '').toString().isNotEmpty);
+    final pageBackground = const Color(0xFFF7F8FA);
+    final surface = Theme.of(context).colorScheme.surface;
+    final borderColor = const Color(0xFFE8EAF0);
+
+    return ColoredBox(
+      color: pageBackground,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(_adaptivePagePadding(context), compact ? 14 : 24, _adaptivePagePadding(context), 34),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 980),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(s.t('settings'), style: TextStyle(fontSize: compact ? 26 : 32, fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.onSurface)),
+                  const SizedBox(height: 4),
+                  Text(s.t('organizedSettingsSubtitle'), style: const TextStyle(color: AppColors.muted, fontSize: 13)),
+                ])),
+              ]),
+              const SizedBox(height: 18),
+              InkWell(
+                onTap: _openProfileEditor,
+                borderRadius: BorderRadius.circular(26),
+                child: Container(
+                  decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFFFF7A1A), Color(0xFFFF5A00)], begin: Alignment.topRight, end: Alignment.bottomLeft), borderRadius: BorderRadius.circular(26), boxShadow: const [BoxShadow(color: Color(0x22FF6B00), blurRadius: 28, offset: Offset(0, 12))]),
+                  padding: EdgeInsets.all(compact ? 18 : 24),
+                  child: Row(children: [
+                    Container(width: compact ? 72 : 84, height: compact ? 72 : 84, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)), child: const Icon(Icons.storefront_rounded, color: AppColors.orange, size: 42)),
+                    const SizedBox(width: 16),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(s.t('profile'), style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 4),
+                      Text(storeName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: compact ? 20 : 26, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 6, children: [
+                        _ProfileBadge(text: approvalBadgeText, icon: approvalBadgeIcon),
+                        _ProfileBadge(text: docsReady ? s.t('documentsComplete') : s.t('documentsIncomplete'), icon: docsReady ? Icons.task_alt_rounded : Icons.description_outlined),
+                      ]),
+                    ])),
+                    const Icon(Icons.edit_rounded, color: Colors.white),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 18),
+              _SettingsSection(
+                title: s.t('profileStoreSettings'),
+                icon: Icons.manage_accounts_outlined,
+                child: Column(children: [
+                  _settingsNavTile(icon: Icons.storefront_outlined, title: s.t('restaurantInformation'), subtitle: s.t('profileStoreSettingsSubtitle'), onTap: _openProfileEditor),
+                  _settingsNavTile(icon: Icons.description_outlined, title: s.t('documents'), subtitle: docsReady ? s.t('documentsComplete') : s.t('documentsIncomplete'), onTap: _openDocumentsEditor, accent: const Color(0xFF16A34A)),
+                  _settingsNavTile(icon: Icons.location_on_rounded, title: widget.currentLocale.languageCode == 'en' ? 'Store location' : widget.currentLocale.languageCode == 'ku' ? 'شوێنی فرۆشگا' : 'موقع المتجر', subtitle: widget.currentLocale.languageCode == 'en' ? 'Address, coordinates and arrival note' : widget.currentLocale.languageCode == 'ku' ? 'ناونیشان، کۆئۆردینات و تێبینی گەیشتن' : 'العنوان، الإحداثيات وملاحظة الوصول', onTap: () => _openStoreOperations(0), accent: const Color(0xFF2563EB)),
+                  _settingsNavTile(icon: Icons.delivery_dining_rounded, title: widget.currentLocale.languageCode == 'en' ? 'Delivery & pickup' : widget.currentLocale.languageCode == 'ku' ? 'گەیاندن و وەرگرتن' : 'التوصيل والاستلام', subtitle: widget.currentLocale.languageCode == 'en' ? 'Delivery, pickup, fees and zones' : widget.currentLocale.languageCode == 'ku' ? 'گەیاندن، وەرگرتن، کرێ و ناوچەکان' : 'التوصيل، الاستلام، الرسوم والمناطق', onTap: () => _openStoreOperations(1), accent: const Color(0xFF16A34A)),
+                  _settingsNavTile(icon: Icons.schedule_rounded, title: s.t('workingHours'), subtitle: widget.currentLocale.languageCode == 'en' ? 'Weekly schedule and days off' : widget.currentLocale.languageCode == 'ku' ? 'خشتەی هەفتانە و ڕۆژانی پشوو' : 'جدول أسبوعي مع تحديد أيام العطلة', onTap: () => _openStoreOperations(2), accent: const Color(0xFF7C3AED)),
+                  _settingsNavTile(icon: Icons.payments_outlined, title: s.t('paymentMethods'), subtitle: s.t('paymentMethodsSubtitle'), onTap: _openPaymentMethods, accent: const Color(0xFF7C3AED)),
+                  _settingsNavTile(icon: Icons.notifications_active_outlined, title: s.t('orderNotifications'), subtitle: s.t('orderNotificationsSubtitle'), onTap: _openOrderNotifications, accent: const Color(0xFFF59E0B)),
+                  _settingsNavTile(icon: Icons.image_outlined, title: 'صور المنتجات في تفاصيل الطلب', subtitle: 'تشغيل أو إيقاف عرض صور المنتجات داخل الطلب', onTap: _openOrderProductImagesSetting),
+                  _settingsNavTile(icon: Icons.image_outlined, title: 'صور المنتجات في تفاصيل الطلب', subtitle: 'تشغيل أو إيقاف عرض صور المنتجات داخل الطلب', onTap: _openOrderProductImagesSetting),
+                  _settingsNavTile(icon: Icons.print_outlined, title: 'الطابعة', subtitle: 'طباعة الطلبات، نسخة المطبخ والكاشير وإعدادات الورق', onTap: _openPrinterSettings, accent: const Color(0xFF0F766E)),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(22), border: Border.all(color: borderColor)),
+                child: SwitchListTile.adaptive(
+                  value: _isOpen,
+                  onChanged: canOpenStore ? (v) async {
+                    final previous = _isOpen;
+                    setState(() => _isOpen = v);
+                    try {
+                      final updated = await AuthService.instance.updateStoreOpenStatus(v);
+                      if (mounted) widget.onSaved(updated);
+                    } on PostgrestException catch (error) {
+                      if (!context.mounted) return;
+                      setState(() => _isOpen = previous);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(error.message)),
+                      );
+                    } on AuthException catch (error) {
+                      if (!context.mounted) return;
+                      setState(() => _isOpen = previous);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(error.message)),
+                      );
+                    } catch (error) {
+                      if (!context.mounted) return;
+                      setState(() => _isOpen = previous);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('تعذر تحديث حالة المتجر: $error')),
+                      );
+                    }
+                  } : null,
+                  activeThumbColor: AppColors.green,
+                  secondary: Container(width: 44, height: 44, decoration: BoxDecoration(color: (_isOpen ? AppColors.green : const Color(0xFF64748B)).withValues(alpha: .1), borderRadius: BorderRadius.circular(14)), child: Icon(_isOpen ? Icons.store_rounded : Icons.store_mall_directory_outlined, color: _isOpen ? AppColors.green : const Color(0xFF64748B))),
+                  title: Text(statusTitle, style: const TextStyle(fontWeight: FontWeight.w900)),
+                  subtitle: Text(statusSubtitle),
+                ),
+              ),
+              const SizedBox(height: 18),
+              _SettingsSection(
+                title: s.t('appAccountSettings'),
+                icon: Icons.manage_accounts_outlined,
+                child: Column(children: [
+                  _settingsNavTile(icon: Icons.language_rounded, title: s.t('currentLanguage'), subtitle: widget.currentLocale.languageCode == 'ar' ? s.t('arabic') : widget.currentLocale.languageCode == 'ku' ? s.t('kurdish') : s.t('english'), onTap: () async {
+                    final code = await showDialog<String>(context: context, builder: (c) => SimpleDialog(title: Text(s.t('currentLanguage')), children: [SimpleDialogOption(onPressed: () => Navigator.pop(c, 'ar'), child: Text(s.t('arabic'))), SimpleDialogOption(onPressed: () => Navigator.pop(c, 'ku'), child: Text(s.t('kurdish'))), SimpleDialogOption(onPressed: () => Navigator.pop(c, 'en'), child: Text(s.t('english')))]));
+                    if (code != null) {
+                      await WidgetsBinding.instance.endOfFrame;
+                      if (!context.mounted) return;
+                      widget.onLocaleChanged(Locale(code));
+                    }
+                  }, accent: const Color(0xFF2563EB)),
+                  _settingsNavTile(
+                    icon: Icons.pin_outlined,
+                    title: widget.currentLocale.languageCode == 'en'
+                        ? 'Change PIN'
+                        : widget.currentLocale.languageCode == 'ku'
+                            ? 'گۆڕینی PIN'
+                            : 'تغيير PIN',
+                    subtitle: widget.currentLocale.languageCode == 'en'
+                        ? 'Change your 4-digit sign-in PIN'
+                        : widget.currentLocale.languageCode == 'ku'
+                            ? 'PIN ـی 4 ژمارەیی چوونەژوورەوە بگۆڕە'
+                            : 'تغيير رمز الدخول المكوّن من 4 أرقام',
+                    onTap: () => _showPartnerChangePinDialog(
+                      context: context,
+                      role: 'business',
+                      language: widget.currentLocale.languageCode,
+                    ),
+                    accent: const Color(0xFF7C3AED),
+                  ),
+                  _settingsNavTile(icon: Icons.shield_outlined, title: s.t('securityPrivacy'), subtitle: s.t('securityPrivacy'), onTap: () => _openInfoPage(s.t('securityPrivacy'), s.t('securityBody'), Icons.shield_outlined), accent: const Color(0xFF16A34A)),
+                  _settingsNavTile(
+                    icon: Icons.delete_forever_outlined,
+                    title: widget.currentLocale.languageCode == 'en' ? 'Delete account' : widget.currentLocale.languageCode == 'ku' ? 'سڕینەوەی هەژمار' : 'حذف الحساب',
+                    subtitle: widget.currentLocale.languageCode == 'en' ? 'Permanently delete this store owner account' : widget.currentLocale.languageCode == 'ku' ? 'هەژماری خاوەنی فرۆشگا بە هەمیشەیی بسڕەوە' : 'حذف حساب مالك المتجر نهائيًا',
+                    onTap: _deleteStoreAccount,
+                    accent: const Color(0xFFDC2626),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              _SettingsSection(
+                title: s.t('supportHelp'),
+                icon: Icons.support_agent_rounded,
+                child: Column(children: [
+                  _settingsNavTile(icon: Icons.headset_mic_outlined, title: s.t('contactSupport'), subtitle: s.t('contactSupportSubtitle'), onTap: _contactSupport),
+                  _settingsNavTile(icon: Icons.description_outlined, title: s.t('termsConditions'), subtitle: s.t('appTitle'), onTap: () => _openInfoPage(s.t('termsConditions'), s.t('termsBody'), Icons.description_outlined), accent: const Color(0xFF64748B)),
+                  _settingsNavTile(icon: Icons.privacy_tip_outlined, title: s.t('privacyPolicy'), subtitle: s.t('securityPrivacy'), onTap: () => _openInfoPage(s.t('privacyPolicy'), s.t('privacyBody'), Icons.privacy_tip_outlined), accent: const Color(0xFF16A34A)),
+                  _settingsNavTile(icon: Icons.help_outline_rounded, title: s.t('faq'), subtitle: s.t('supportHelp'), onTap: () => _openInfoPage(s.t('faq'), s.t('faqBody'), Icons.help_outline_rounded), accent: const Color(0xFFF59E0B)),
+                  _settingsNavTile(icon: Icons.info_outline_rounded, title: s.t('aboutHalaTalab'), subtitle: s.t('appTitle'), onTap: () => _openInfoPage(s.t('aboutHalaTalab'), s.t('aboutHalaTalabBody'), Icons.info_outline_rounded), accent: const Color(0xFF7C3AED)),
+                  _settingsNavTile(icon: Icons.apps_rounded, title: s.t('appInformation'), subtitle: '${s.t('appVersion')} 1.0.0', onTap: () => _openInfoPage(s.t('appInformation'), '${s.t('appInfoBody')}\n\n${s.t('appVersion')}: 1.0.0', Icons.apps_rounded), accent: const Color(0xFF2563EB)),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(onPressed: widget.onLogout, style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFDC2626), side: const BorderSide(color: Color(0xFFFCA5A5)), padding: const EdgeInsets.symmetric(vertical: 16)), icon: const Icon(Icons.logout_rounded), label: Text(s.t('signOut'), style: const TextStyle(fontWeight: FontWeight.w900))),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _StoreProfileEditResult {
+  const _StoreProfileEditResult({
+    required this.name,
+    required this.description,
+    required this.phone,
+    required this.email,
+    required this.address,
+    required this.logoUrl,
+    required this.coverUrl,
+    required this.logoFile,
+    required this.coverFile,
+    required this.removeLogo,
+    required this.removeCover,
+  });
+
+  final String name;
+  final String description;
+  final String phone;
+  final String email;
+  final String address;
+  final String logoUrl;
+  final String coverUrl;
+  final PlatformFile? logoFile;
+  final PlatformFile? coverFile;
+  final bool removeLogo;
+  final bool removeCover;
+}
+
+class _StoreProfileEditorPage extends StatefulWidget {
+  const _StoreProfileEditorPage({
+    required this.currentLocale,
+    required this.name,
+    required this.description,
+    required this.phone,
+    required this.email,
+    required this.address,
+    required this.logoUrl,
+    required this.coverUrl,
+  });
+
+  final Locale currentLocale;
+  final String name;
+  final String description;
+  final String phone;
+  final String email;
+  final String address;
+  final String logoUrl;
+  final String coverUrl;
+
+  @override
+  State<_StoreProfileEditorPage> createState() => _StoreProfileEditorPageState();
+}
+
+class _StoreProfileEditorPageState extends State<_StoreProfileEditorPage> {
+  late final TextEditingController _name;
+  late final TextEditingController _description;
+  late final TextEditingController _phone;
+  late final TextEditingController _email;
+  late final TextEditingController _address;
+  PlatformFile? _logoFile;
+  PlatformFile? _coverFile;
+  late String _savedLogoUrl;
+  late String _savedCoverUrl;
+  bool _removeLogo = false;
+  bool _removeCover = false;
+  bool _picking = false;
+  bool _uploadingLogo = false;
+  bool _uploadingCover = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.name);
+    _description = TextEditingController(text: widget.description);
+    _phone = TextEditingController(text: _partnerLocalIraqiPhone(widget.phone));
+    _email = TextEditingController(text: widget.email);
+    _address = TextEditingController(text: widget.address);
+    _savedLogoUrl = widget.logoUrl;
+    _savedCoverUrl = widget.coverUrl;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    _phone.dispose();
+    _email.dispose();
+    _address.dispose();
+    super.dispose();
+  }
+
+  String _label(String ar, String ku, String en) {
+    final code = widget.currentLocale.languageCode;
+    if (code == 'en') return en;
+    if (code == 'ku') return ku;
+    return ar;
+  }
+
   Future<void> _openOrderNotifications() async {
     final s = AppStrings.of(context);
     final raw = widget.store?['order_notification_settings'];

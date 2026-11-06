@@ -229,6 +229,26 @@ class ProductsRepository {
       throw ArgumentError('Stock cannot be negative');
     }
 
+    // Resolve the current category name by its stable ID, not a possibly
+    // stale label retained by an open product editor.
+    final cleanCategoryId = (categoryId ?? '').trim();
+    String resolvedCategoryName = categoryName.trim();
+    if (cleanCategoryId.isNotEmpty) {
+      final currentCategory = await _client
+          .from('product_categories')
+          .select('name')
+          .eq('id', cleanCategoryId)
+          .eq('store_id', storeId)
+          .maybeSingle();
+      if (currentCategory == null) {
+        throw StateError('Selected category no longer exists for this store');
+      }
+      resolvedCategoryName = (currentCategory['name']?.toString() ?? '').trim();
+      if (resolvedCategoryName.isEmpty) {
+        throw StateError('Selected category has no name');
+      }
+    }
+
     final cleanBarcode = (barcode ?? '').trim();
     final cleanSku = (sku ?? '').trim();
     final values = <String, dynamic>{
@@ -236,8 +256,8 @@ class ProductsRepository {
       'name': cleanName,
       'description': description.trim().isEmpty ? null : description.trim(),
       'price': price,
-      'category_id': (categoryId ?? '').trim().isEmpty ? null : categoryId!.trim(),
-      'category_name': categoryName.trim().isEmpty ? null : categoryName.trim(),
+      'category_id': cleanCategoryId.isEmpty ? null : cleanCategoryId,
+      'category_name': resolvedCategoryName.isEmpty ? null : resolvedCategoryName,
       'is_available': isAvailable,
       'image_url': imageUrl,
       'image_path': imagePath,

@@ -356,6 +356,7 @@ class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
   List<Map<String, dynamic>> _categories = [];
   String? _openCategoryId;
   final Set<String> _selected = {};
+  final Map<String, int> _quantities = {};
   String _type = 'percentage';
   DateTime _start = DateTime.now();
   DateTime _end = DateTime.now().add(const Duration(days: 7));
@@ -380,6 +381,13 @@ class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
       _end = DateTime.tryParse(item['end_at']?.toString() ?? '')?.toLocal() ?? _end;
       if (item['product_ids'] is List) {
         _selected.addAll((item['product_ids'] as List).map((e) => e.toString()));
+        final saved = item['product_quantities'];
+        if (saved is Map) {
+          for (final entry in saved.entries) {
+            final qty = int.tryParse(entry.value.toString()) ?? 1;
+            if (qty >= 1 && qty <= 999) _quantities[entry.key.toString()] = qty;
+          }
+        }
       }
     }
     _loadProducts();
@@ -439,7 +447,7 @@ class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
       }
       await OffersRepository.instance.saveProductOffer(
         offerId: widget.item?['id']?.toString(), title: _title.text,
-        productIds: _selected.toList(), discountType: _type,
+        productIds: _selected.toList(), productQuantities: {for (final id in _selected) id: _quantities[id] ?? 1}, discountType: _type,
         discountValue: value, startAt: _start, endAt: _end, isActive: _active,
         imageUrl: imageUrl, imagePath: imagePath);
       if (mounted) Navigator.pop(context, true);
@@ -474,17 +482,47 @@ class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
   @override
   void dispose() { _title.dispose(); _value.dispose(); super.dispose(); }
 
+  // The offer is priced from all selected units, not one unit per product.
+  double get _selectedOriginalTotal {
+    var total = 0.0;
+    for (final product in _products) {
+      final id = product['id']?.toString() ?? '';
+      if (!_selected.contains(id)) continue;
+      final price = num.tryParse(product['price']?.toString() ?? '') ?? 0;
+      total += price * (_quantities[id] ?? 1);
+    }
+    return total;
+  }
+
+  String _formatOfferMoney(num value) =>
+      value == value.roundToDouble() ? value.toInt().toString() : value.toStringAsFixed(2);
+
   Widget _offerProductCheckbox(Map<String, dynamic> product) {
     final id = product['id']?.toString() ?? '';
-    return CheckboxListTile(
-      dense: true,
-      title: Text(product['name']?.toString() ?? ''),
-      subtitle: Text('السعر: ${product['price'] ?? ''}'),
-      value: _selected.contains(id),
-      onChanged: (checked) => setState(() {
-        if (checked == true) { _selected.add(id); } else { _selected.remove(id); }
-      }),
-    );
+    final checked = _selected.contains(id);
+    final qty = _quantities[id] ?? 1;
+    final unitPrice = num.tryParse(product['price']?.toString() ?? '') ?? 0;
+    return Row(children: [
+      Expanded(child: CheckboxListTile(
+        dense: true,
+        title: Text(product['name']?.toString() ?? ''),
+        subtitle: Text(checked
+            ? 'سعر القطعة: ${_formatOfferMoney(unitPrice)} • المجموع: ${_formatOfferMoney(unitPrice * qty)} د.ع'
+            : 'سعر القطعة: ${_formatOfferMoney(unitPrice)} د.ع'),
+        value: checked,
+        onChanged: (value) => setState(() {
+          if (value == true) { _selected.add(id); _quantities.putIfAbsent(id, () => 1); }
+          else { _selected.remove(id); _quantities.remove(id); }
+        }),
+      )),
+      if (checked) ...[
+        IconButton(icon: const Icon(Icons.remove_circle_outline),
+          onPressed: qty > 1 ? () => setState(() => _quantities[id] = qty - 1) : null),
+        Text('$qty', style: const TextStyle(fontWeight: FontWeight.bold)),
+        IconButton(icon: const Icon(Icons.add_circle_outline),
+          onPressed: qty < 999 ? () => setState(() => _quantities[id] = qty + 1) : null),
+      ],
+    ]);
   }
 
   @override
@@ -518,7 +556,7 @@ class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
             DropdownMenuItem(value: 'fixed', child: Text('مبلغ خصم ثابت')),
             DropdownMenuItem(value: 'final_price', child: Text('سعر نهائي للصنف')),
           ], onChanged: (value) { if (value != null) setState(() => _type = value); }),
-        TextField(controller: _value, keyboardType: TextInputType.number,
+        TextField(controller: _value, onChanged: (_) => setState(() {}), keyboardType: TextInputType.number,
           decoration: InputDecoration(labelText: _type == 'final_price' ? 'السعر بعد الخصم' : 'قيمة الخصم')),
         const SizedBox(height: 12),
         Wrap(spacing: 8, children: [
@@ -527,6 +565,22 @@ class _ProductOfferEditorDialogState extends State<_ProductOfferEditorDialog> {
         ]),
         SwitchListTile(title: const Text('العرض فعال'), value: _active,
           onChanged: (value) => setState(() => _active = value)),
+        if (_selected.isNotEmpty) Builder(builder: (_) {
+          final original = _selectedOriginalTotal;
+          final value = double.tryParse(_value.text.trim()) ?? 0;
+          final discount = _type == 'percentage'
+              ? original * value.clamp(0, 100) / 100
+              : _type == 'fixed' ? value.clamp(0, original).toDouble()
+              : (original - value).clamp(0, original).toDouble();
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              'مجموع الأصناف حسب الكميات: ${_formatOfferMoney(original)} د.ع\n'
+              'السعر بعد الخصم: ${_formatOfferMoney(original - discount)} د.ع',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          );
+        }),
         const Text('اختر الأصناف المشمولة بالعرض', style: TextStyle(fontWeight: FontWeight.bold)),
         const Text('إذا اخترت صنفاً واحداً ينطبق الخصم على كل قطعة. وإذا اخترت عدة أصناف فهي مجموعة كومبو ولا يكتمل الخصم إلا بوجود جميع الأصناف معاً. تكرار المجموعة يكرر الخصم.', style: TextStyle(fontSize: 12)),
         if (_loading) const LinearProgressIndicator(),

@@ -1466,10 +1466,65 @@ class _OrderStatusBadge extends StatelessWidget {
   }
 }
 
-class _OrderDetailsDialog extends StatelessWidget {
+class _OrderDetailsDialog extends StatefulWidget {
   const _OrderDetailsDialog({required this.order});
-
   final Map<String, dynamic> order;
+
+  @override
+  State<_OrderDetailsDialog> createState() => _OrderDetailsDialogState();
+}
+
+class _OrderDetailsDialogState extends State<_OrderDetailsDialog> {
+  bool _showProductImages = false;
+  final Map<String, String> _productImages = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProductImages();
+  }
+
+  Future<void> _loadProductImages() async {
+    try {
+      final storeId = widget.order['store_id']?.toString();
+      if (storeId == null || storeId.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('store_order_product_images_$storeId') != true) return;
+      if (mounted) setState(() => _showProductImages = true);
+      final items = widget.order['order_items'] as List? ?? const [];
+      final ids = items.whereType<Map>().map((item) => item['product_id']?.toString())
+          .whereType<String>().where((id) => id.isNotEmpty).toSet().toList();
+      if (ids.isEmpty) return;
+      final rows = await Supabase.instance.client.from('products')
+          .select('id, image_url').inFilter('id', ids);
+      if (!mounted) return;
+      setState(() {
+        for (final row in rows) {
+          final id = row['id']?.toString();
+          final url = row['image_url']?.toString().trim();
+          if (id != null && url != null && url.isNotEmpty) _productImages[id] = url;
+        }
+      });
+    } catch (_) {
+      // Missing or unavailable images must never prevent order details opening.
+    }
+  }
+
+  Widget _orderProductImage(Map<String, dynamic> item) {
+    if (!_showProductImages) return const SizedBox.shrink();
+    final url = _productImages[item['product_id']?.toString()];
+    if (url == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 9),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: Image.network(url, width: 48, height: 48, fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const SizedBox.shrink()),
+      ),
+    );
+  }
+
+  Map<String, dynamic> get order => widget.order;
 
   double? _coordinate(List<String> keys) {
     for (final key in keys) {
@@ -1583,6 +1638,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                     _DetailRow(
                       label: s.t('phone'),
                       value: order['customer_phone'] as String? ?? '-',
+                      copyPhone: true,
                     ),
                     _DetailRow(
                       label: s.t('orderAddress'),
@@ -1657,6 +1713,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(children: [
+                                    _orderProductImage(line),
                                     Expanded(child: Text('$qty × ${orderItemDisplayName(line)}',
                                       style: const TextStyle(fontWeight: FontWeight.w700))),
                                     Text('${(qty * unit).toStringAsFixed(0)} د.ع'),
@@ -1697,6 +1754,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
+                        _orderProductImage(item),
                         Container(
                           width: 42,
                           height: 42,
@@ -1821,11 +1879,13 @@ class _DetailRow extends StatelessWidget {
     required this.label,
     required this.value,
     this.emphasized = false,
+    this.copyPhone = false,
   });
 
   final String label;
   final String value;
   final bool emphasized;
+  final bool copyPhone;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -1852,6 +1912,19 @@ class _DetailRow extends StatelessWidget {
                 ),
               ),
             ),
+            if (copyPhone && value.trim().isNotEmpty && value.trim() != '-')
+              IconButton(
+                icon: const Icon(Icons.copy_outlined, size: 20),
+                tooltip: 'نسخ رقم العميل',
+                visualDensity: VisualDensity.compact,
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: value.trim()));
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم نسخ رقم العميل')),
+                  );
+                },
+              ),
           ],
         ),
       );
