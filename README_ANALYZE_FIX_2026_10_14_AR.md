@@ -1,0 +1,1 @@
+تصحيح أخطاء flutter analyze المعروضة: إزالة import من ملف part dashboard_shell.dart (المكتبة الأم تستورد services بالفعل)، وإضافة أقواس if في products_management.dart. حافظنا على الجرس وWaze والانتقال المباشر إلى جاهزة. لم يُشغّل Flutter analyze هنا لعدم توفر Flutter SDK. لا تغييرات Supabase أو SQL.

@@ -1,0 +1,9 @@
+NOTE24 review-only ownership correction (13 Oct 2026)
+
+Changed: partners repository passes explicitly resolved store id to hala_save_category_with_shifts RPC.
+Changed: SQL requires p_store_id and checks matching auth.uid() and stores.owner_id before any writes.
+Avoids arbitrary first store selection and rejects cross-store category edits.
+
+IMPORTANT: This is a REVIEW-ONLY patch, NOT production ready.
+Do not deploy SQL or push to GitHub. Database schema, auth, trigger interactions, category image/order updates, customer visibility, and migrations still need staging tests.
+The SQL signature changed: do NOT mix the previous function definition with the new Dart code.

@@ -104,11 +104,11 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
   Widget build(BuildContext context) {
     final s = AppStrings.of(context);
     final orders = _periodOrders;
-    final delivered = orders.where((o) => o['status'] == 'delivered').toList();
-    final cancelled = orders.where((o) => const ['cancelled', 'rejected'].contains(o['status'])).length;
+    final delivered = orders.where((o) => const {'delivered', 'completed'}.contains(o['status']?.toString().trim().toLowerCase())).toList();
+    final cancelled = orders.where((o) => const {'cancelled', 'canceled', 'rejected'}.contains(o['status']?.toString().trim().toLowerCase())).length;
     final revenue = delivered.fold<double>(0, (sum, order) => sum + _storeRevenue(order));
     final discounts = delivered.fold<double>(0, (sum, order) => sum + _discount(order));
-    final activeOrders = orders.where((o) => !const ['delivered', 'cancelled', 'rejected'].contains(o['status'])).length;
+    final activeOrders = orders.where((o) => !const {'delivered', 'completed', 'cancelled', 'canceled', 'rejected'}.contains(o['status']?.toString().trim().toLowerCase())).length;
     final double average = delivered.isEmpty ? 0.0 : revenue / delivered.length;
     final cancellationRate = orders.isEmpty ? 0.0 : cancelled * 100 / orders.length;
     final rating = _reviews.isEmpty
@@ -445,7 +445,7 @@ class _ReportsAnalyticsPageState extends State<_ReportsAnalyticsPage> {
   Map<String, int> _statusCounts(List<Map<String, dynamic>> orders) {
     final counts = <String, int>{};
     for (final order in orders) {
-      final status = order['status']?.toString() ?? 'pending';
+      final status = order['status']?.toString().trim().toLowerCase() ?? 'pending';
       counts[status] = (counts[status] ?? 0) + 1;
     }
     return counts;
@@ -653,7 +653,7 @@ class _MonthlyOrdersPageState extends State<_MonthlyOrdersPage> {
                       )
                     else
                       ..._orders.map((order) {
-                        final status = order['status']?.toString() ?? 'pending';
+                        final status = order['status']?.toString().trim().toLowerCase() ?? 'pending';
                         final color = _statusColor(status);
                         final totalValue = (order['total'] as num?)?.toDouble() ?? 0;
                         final orderNumber = order['order_number']?.toString().trim();
@@ -964,7 +964,11 @@ class _StatusBreakdown extends StatelessWidget {
     final total = counts.values.fold<int>(0, (a, b) => a + b);
     return Column(
       children: rows.map((row) {
-        final count = row.$1 == 'cancelled' ? (counts['cancelled'] ?? 0) + (counts['rejected'] ?? 0) : counts[row.$1] ?? 0;
+        final count = row.$1 == 'cancelled'
+            ? (counts['cancelled'] ?? 0) + (counts['canceled'] ?? 0) + (counts['rejected'] ?? 0)
+            : row.$1 == 'delivered'
+                ? (counts['delivered'] ?? 0) + (counts['completed'] ?? 0)
+                : counts[row.$1] ?? 0;
         final ratio = total == 0 ? 0.0 : count / total;
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),

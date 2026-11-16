@@ -1,0 +1,5 @@
+NOTE24 REVIEW ONLY - NOT FOR DEPLOYMENT
+Added a server refresh after a category save failure to reconcile partial commits.
+Does NOT make saving category data + links atomic.
+Existing SQL RPC must NOT be run without staging validation.
+Remaining: atomic category+links transaction, old shift_id trigger contract, customer filtering, tests.

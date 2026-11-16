@@ -3,10 +3,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:printing/printing.dart' show Printer;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/app_colors.dart';
@@ -51,6 +51,7 @@ part 'driver_assigned_order.dart';
 part 'driver_earnings_wallet.dart';
 part 'driver_delivery_history.dart';
 part 'driver_account_center.dart';
+part 'hala_directed_offers.dart';
 part 'driver_ratings.dart';
 
 

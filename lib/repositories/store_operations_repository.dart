@@ -56,6 +56,69 @@ class StoreOperationsRepository {
     throw PostgrestException(message: 'Store operation settings were not returned');
   }
 
+  // Preserve the existing store ID; resolve from the session only when missing.
+  Future<String> _coverageStoreId(String? storeId) async {
+    if (_client.auth.currentUser == null) throw const AuthException('User is not signed in');
+    if (storeId != null && storeId.isNotEmpty) return storeId;
+    final store = await getCurrentStore();
+    final resolved = store?['id']?.toString();
+    if (resolved == null || resolved.isEmpty) throw StateError('Store ID unavailable');
+    return resolved;
+  }
+
+  // Zone coverage is additive: it does not replace the legacy operations RPC.
+  Future<List<Map<String, dynamic>>> getDeliveryCoverage({required String? storeId}) async {
+    final resolvedStoreId = await _coverageStoreId(storeId);
+    final response = await _client.rpc('hala_get_my_delivery_coverage_v1', params: {'p_store_id': resolvedStoreId});
+    return List<Map<String, dynamic>>.from(
+      (response as List).map((row) => Map<String, dynamic>.from(row as Map)),
+    );
+  }
+
+  Future<void> saveDeliveryCoverage({
+    required String? storeId,
+    required String areaId,
+    required bool enabled,
+    required double deliveryFee,
+  }) async {
+    final resolvedStoreId = await _coverageStoreId(storeId);
+    if (deliveryFee < 0 || deliveryFee > 100000000 || !deliveryFee.isFinite || deliveryFee != deliveryFee.roundToDouble()) {
+      throw ArgumentError.value(deliveryFee, 'deliveryFee');
+    }
+    if (_client.auth.currentUser == null) throw const AuthException('User is not signed in');
+    try {
+      await _client.rpc('hala_save_my_delivery_coverage_v1', params: {
+        'p_store_id': resolvedStoreId,
+        'p_area_id': areaId,
+        'p_enabled': enabled,
+        'p_delivery_fee': deliveryFee,
+      });
+    } on PostgrestException catch (error) {
+      if (!error.message.contains('STORE_ACCESS_DENIED')) rethrow;
+      // Read-only diagnostic; never bypass server ownership/approval checks.
+      final store = await _client.from('stores')
+          .select('id,owner_id,is_active,approval_status,zone_id')
+          .eq('id', resolvedStoreId)
+          .maybeSingle();
+      final currentUserId = _client.auth.currentUser?.id;
+      String reason;
+      if (store == null) {
+        reason = 'المتجر غير متاح لهذا الحساب أو غير موجود.';
+      } else if (store['owner_id']?.toString() != currentUserId) {
+        reason = 'الحساب الحالي ليس مالك هذا المتجر.';
+      } else if (store['zone_id'] == null) {
+        reason = 'لم يتم تحديد المنطقة الأصلية للمتجر في الإدارة.';
+      } else if (store['is_active'] != true) {
+        reason = 'المتجر غير مفعّل.';
+      } else if (store['approval_status'] != 'approved') {
+        reason = 'المتجر لم يحصل على الموافقة بعد.';
+      } else {
+        reason = 'رفض الخادم الحفظ رغم ظهور الشروط صحيحة؛ يلزم فحص جلسة الدخول.';
+      }
+      throw StateError(reason);
+    }
+  }
+
   Future<Map<String, dynamic>> saveMerchantDeliveryPreferences({
     required bool selfDelivery,
     required bool alwaysOpen,

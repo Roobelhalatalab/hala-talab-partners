@@ -20,8 +20,8 @@ function normalizeRole(raw: unknown) {
   return role
 }
 
-function syntheticEmail(phone: string) {
-  return `${phone.replace(/\D/g, '')}@phone.halatalab.invalid`
+function syntheticEmail(phone: string, role: string) {
+  return `${phone.replace(/\D/g, '')}.${role}@phone.halatalab.invalid`
 }
 
 function roleMismatchCode(role: string) {
@@ -42,11 +42,22 @@ Deno.serve(async (req) => {
     if (!supabaseUrl || !serviceKey) return json({ ok: false, code: 'SERVER_AUTH_NOT_CONFIGURED' }, 503)
     const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
-    const { data: registry, error: registryError } = await sb.from('phone_account_registry')
-      .select('auth_user_id,account_role').eq('phone_e164', phone).maybeSingle()
+    // A phone may own a customer account in addition to ONE partner account.
+    // Business/driver separation remains strict; only the customer role is shareable.
+    const { data: phoneAccounts, error: registryError } = await sb.from('phone_account_registry')
+      .select('auth_user_id,account_role').eq('phone_e164', phone)
     if (registryError) throw registryError
-    if (registry && registry.account_role !== role) {
-      return json({ ok: false, code: roleMismatchCode(String(registry.account_role)) }, 409)
+
+    const registries = Array.isArray(phoneAccounts) ? phoneAccounts : []
+    const registry = registries.find((item) => String(item.account_role) === role) ?? null
+    const otherPartner = registries.find((item) => ['business', 'driver'].includes(String(item.account_role)) && String(item.account_role) !== role)
+    const anyOther = registries.find((item) => String(item.account_role) !== role)
+
+    // Preserve the existing rule for partner signup/login: a partner number cannot
+    // silently switch between customer/business/driver. The one intentional exception
+    // is customer registration: a store owner or driver may also create a customer account.
+    if (role !== 'customer' && !registry && anyOther) {
+      return json({ ok: false, code: roleMismatchCode(String(otherPartner?.account_role ?? anyOther.account_role)) }, 409)
     }
 
     if (action === 'request_pin_reset') {
@@ -80,6 +91,51 @@ Deno.serve(async (req) => {
       return json({ ok: true, phone, role })
     }
 
+    if (action === 'change_pin') {
+      if (!registry) return json({ ok: false, code: 'ACCOUNT_NOT_FOUND' }, 404)
+
+      const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? ''
+      const jwt = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : ''
+      if (!jwt) return json({ ok: false, code: 'AUTH_REQUIRED' }, 401)
+
+      const { data: currentUserData, error: currentUserError } = await sb.auth.getUser(jwt)
+      if (currentUserError || !currentUserData.user) {
+        return json({ ok: false, code: 'AUTH_REQUIRED' }, 401)
+      }
+      if (currentUserData.user.id !== registry.auth_user_id) {
+        return json({ ok: false, code: 'ACCOUNT_MISMATCH' }, 403)
+      }
+
+      const currentPin = String(body?.current_pin ?? '').trim()
+      const newPin = String(body?.new_pin ?? '').trim()
+      if (!/^\d{4}$/.test(currentPin) || !/^\d{4}$/.test(newPin)) {
+        return json({ ok: false, code: 'INVALID_PIN' }, 400)
+      }
+      if (currentPin === newPin) {
+        return json({ ok: false, code: 'PIN_UNCHANGED' }, 400)
+      }
+
+      const { data: pinStatus, error: pinCheckError } = await sb.rpc('server_check_phone_pin', {
+        p_user_id: registry.auth_user_id,
+        p_pin: currentPin,
+      })
+      if (pinCheckError) throw pinCheckError
+      if (pinStatus === 'PIN_NOT_SET') {
+        return json({ ok: false, code: 'PIN_NOT_SET_USE_RECOVERY' }, 409)
+      }
+      if (pinStatus !== 'OK') {
+        return json({ ok: false, code: pinStatus || 'PIN_INCORRECT' }, pinStatus === 'PIN_LOCKED' ? 429 : 401)
+      }
+
+      const { error: pinSetError } = await sb.rpc('server_set_phone_pin', {
+        p_user_id: registry.auth_user_id,
+        p_phone_e164: phone,
+        p_pin: newPin,
+      })
+      if (pinSetError) throw pinSetError
+      return json({ ok: true, phone, role })
+    }
+
     const pin = String(body?.pin ?? '').trim()
     if (!/^\d{4}$/.test(pin)) return json({ ok: false, code: 'INVALID_PIN' }, 400)
 
@@ -88,7 +144,7 @@ Deno.serve(async (req) => {
     if (registry && action === 'register') return json({ ok: false, code: 'ACCOUNT_ALREADY_EXISTS' }, 409)
 
     let userId = registry?.auth_user_id as string | undefined
-    let email = syntheticEmail(phone)
+    let email = syntheticEmail(phone, role)
     let isNewAccount = false
 
     if (!userId) {

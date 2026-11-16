@@ -1,0 +1,7 @@
+NOTE24 UI patch (review only, DO NOT DEPLOY)
+- Category dialog now reads existing shift links and allows multiple selections.
+- Empty link table is interpreted as all shifts, matching existing catalog semantics.
+- Read failure cancels edit to avoid silently overwriting links.
+- At least one shift is required.
+- Existing legacy product_categories.shift_id is retained for compatibility.
+LIMITATIONS: category record save and shift link RPC are NOT one transaction; staging RPC and Flutter integration tests are required. The old trigger must be reviewed before any database deployment.

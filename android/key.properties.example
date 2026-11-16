@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties only after you restore the ORIGINAL upload keystore.
+# Do not create a new signing key for an app that already exists in Google Play.
+storePassword=YOUR_ORIGINAL_STORE_PASSWORD
+keyPassword=YOUR_ORIGINAL_KEY_PASSWORD
+keyAlias=hala-talab-partners
+storeFile=hala-talab-partners-upload-key.jks

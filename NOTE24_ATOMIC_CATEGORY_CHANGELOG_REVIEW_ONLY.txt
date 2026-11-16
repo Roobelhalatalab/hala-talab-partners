@@ -1,0 +1,4 @@
+NOTE24 draft: category fields + category shift links saved via one SQL transaction for shift_mode=2.
+Still separate: category sort_order RPC, image upload, and one-shift legacy path.
+WARNING: SQL is unexecuted; check exact database schema and trigger behavior on staging.
+Do not deploy this ZIP to GitHub or run SQL in production.

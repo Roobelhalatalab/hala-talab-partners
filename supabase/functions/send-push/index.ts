@@ -43,6 +43,7 @@ async function getFcmAccessToken(serviceAccountJson: string) {
 function driverText(eventType: string, orderNumber: unknown) {
   const shown = String(orderNumber ?? '').trim()
   const suffix = shown ? ` #${shown}` : ''
+  if (eventType.startsWith('directed_offer_')) return { title: 'طلب توصيل موجّه إليك', body: `لديك طلب جديد بانتظار قبولك أو رفضك${suffix}` }
   switch (eventType) {
     case 'available': return { title: 'طلب توصيل جديد', body: `يوجد طلب جاهز للتوصيل من متجرك${suffix}` }
     case 'assigned': return { title: 'تم إسناد طلب جديد', body: `لديك طلب توصيل جديد${suffix}` }
@@ -135,6 +136,8 @@ Deno.serve(async (req) => {
       data = stringifyData({ notification_id: n.id, order_id: n.order_id, order_number: n.order_number, notification_type: n.event_type })
     }
 
+    const silentRingResolution = table === 'store_notifications' && data.notification_type === 'merchant_order_resolved'
+
     if (!userId || !role || !title || !body) {
       return json({ error: 'Notification is missing recipient, role, title, or body' }, 400)
     }
@@ -175,7 +178,9 @@ Deno.serve(async (req) => {
       const apnsTopic = role === 'customer'
         ? 'com.halatalab.customer'
         : 'com.halatalab.partners'
-      const platformConfig = platform === 'ios'
+      const platformConfig = silentRingResolution && platform === 'android'
+        ? { android: { priority: 'high' } }
+        : platform === 'ios'
         ? {
             apns: {
               headers: {
@@ -210,7 +215,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           message: {
             token: row.token,
-            notification: { title, body },
+            ...(silentRingResolution && platform === 'android' ? {} : { notification: { title, body } }),
             data,
             ...platformConfig,
           },

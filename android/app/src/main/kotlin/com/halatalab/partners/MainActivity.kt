@@ -25,6 +25,10 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
+import android.media.MediaPlayer
+import android.media.RingtoneManager
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -39,6 +43,62 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : FlutterActivity() {
+    // Merchant-only alert while the Flutter activity/process is alive.
+    // The service-backed locked-screen path must be verified separately.
+    private var orderAlarmPlayer: MediaPlayer? = null
+    private val orderAlarmHandler = Handler(Looper.getMainLooper())
+    private var alarmEnabled = false
+    private val alarmCycle = object : Runnable {
+        override fun run() {
+            if (!alarmEnabled) return
+            playAlarmBurst()
+            orderAlarmHandler.postDelayed(this, 15000L)
+        }
+    }
+    private val stopBurst = Runnable { releaseAlarmPlayer() }
+
+    private fun releaseAlarmPlayer() {
+        orderAlarmHandler.removeCallbacks(stopBurst)
+        try { orderAlarmPlayer?.stop() } catch (_: Exception) {}
+        try { orderAlarmPlayer?.release() } catch (_: Exception) {}
+        orderAlarmPlayer = null
+    }
+
+    private fun stopOrderAlarm() {
+        alarmEnabled = false
+        orderAlarmHandler.removeCallbacks(alarmCycle)
+        releaseAlarmPlayer()
+    }
+
+    private fun playAlarmBurst() {
+        releaseAlarmPlayer()
+        try {
+            // Dedicated five-second Hala Talab melody, independent of device ringtone choice.
+            val uri = android.net.Uri.parse("android.resource://$packageName/${R.raw.hala_order_alert}")
+            val player = MediaPlayer()
+            player.setDataSource(applicationContext, uri)
+            player.setAudioAttributes(android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            player.isLooping = true
+            player.prepare()
+            player.start()
+            orderAlarmPlayer = player
+            orderAlarmHandler.postDelayed(stopBurst, 5000L)
+        } catch (_: Exception) { releaseAlarmPlayer() }
+    }
+
+    private fun startOrderAlarm() {
+        if (alarmEnabled) return
+        alarmEnabled = true
+        alarmCycle.run()
+    }
+
+    override fun onDestroy() {
+        stopOrderAlarm()
+        super.onDestroy()
+    }
+
     private var pendingBluetoothPermissionResult: MethodChannel.Result? = null
 
     companion object {
@@ -55,6 +115,45 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.halatalab.partners/order_alarm")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "configureMerchant" -> {
+                        val store = call.argument<String>("storeId")?.trim().orEmpty()
+                        val enabled = call.argument<Boolean>("enabled") == true
+                        getSharedPreferences("hala_native_merchant_ring", MODE_PRIVATE).edit()
+                            .putString("store_id", store.ifEmpty { null })
+                            .putBoolean("enabled", enabled && store.isNotEmpty())
+                            .apply()
+                        result.success(null)
+                    }
+                    "start" -> {
+                        try {
+                            val intent = Intent(this, OrderRingService::class.java).setAction(OrderRingService.ACTION_START)
+                            val orderId = call.argument<String>("orderId")?.trim().orEmpty()
+                            if (orderId.isNotEmpty()) intent.putExtra(OrderRingService.EXTRA_ORDER_ID, orderId)
+                            androidx.core.content.ContextCompat.startForegroundService(this, intent)
+                            result.success(null)
+                        } catch (e: Exception) { result.error("RING_START_FAILED", e.message, null) }
+                    }
+                    "resolveOrder" -> {
+                        val orderId = call.argument<String>("orderId")?.trim().orEmpty()
+                        if (orderId.isNotEmpty()) {
+                            startService(Intent(this, OrderRingService::class.java)
+                                .setAction(OrderRingService.ACTION_RESOLVE)
+                                .putExtra(OrderRingService.EXTRA_ORDER_ID, orderId))
+                        }
+                        result.success(null)
+                    }
+                    "stop" -> {
+                        startService(Intent(this, OrderRingService::class.java).setAction(OrderRingService.ACTION_STOP))
+                        stopService(Intent(this, OrderRingService::class.java))
+                        stopOrderAlarm()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "requestBluetoothPermission" -> {
@@ -85,10 +184,10 @@ class MainActivity : FlutterActivity() {
                 }
                 "listPrinters" -> {
                     val transport = call.argument<String>("transport") ?: "bluetooth"
-                    if (transport == "ble") {
+                    if (transport == "ble" || transport == "bluetooth_auto") {
                         Thread {
                             try {
-                                val devices = listBlePrinters()
+                                val devices = if (transport == "bluetooth_auto") listBluetoothAutoPrinters() else listBlePrinters()
                                 runOnUiThread { result.success(devices) }
                             } catch (e: PrinterException) {
                                 runOnUiThread { result.error(e.code, e.message, null) }
@@ -118,6 +217,7 @@ class MainActivity : FlutterActivity() {
                             when (transport) {
                                 "bluetooth" -> testBluetoothConnection(deviceId)
                                 "ble" -> testBleConnection(deviceId)
+                                "bluetooth_auto" -> testBluetoothAutoConnection(deviceId)
                                 "usb" -> testUsbConnection(deviceId)
                                 "network" -> testNetworkConnection(host, port)
                                 else -> throw IllegalArgumentException("Unsupported printer transport")
@@ -149,6 +249,7 @@ class MainActivity : FlutterActivity() {
                             when (transport) {
                                 "bluetooth" -> printBluetooth(deviceId, images, widthPx, autoCut, beep)
                                 "ble" -> printBle(deviceId, images, widthPx, autoCut, beep)
+                                "bluetooth_auto" -> printBluetoothAuto(deviceId, images, widthPx, autoCut, beep)
                                 "usb" -> printUsb(deviceId, images, widthPx, autoCut, beep)
                                 "network" -> printNetwork(host, port, images, widthPx, autoCut, beep)
                                 else -> throw IllegalArgumentException("Unsupported printer transport")
@@ -181,6 +282,7 @@ class MainActivity : FlutterActivity() {
     private fun listDirectPrinters(transport: String): List<Map<String, Any?>> {
         return when (transport) {
             "bluetooth" -> listBluetoothPrinters()
+            "bluetooth_auto" -> listBluetoothAutoPrinters()
             "usb" -> listUsbPrinters()
             else -> emptyList()
         }
@@ -222,6 +324,104 @@ class MainActivity : FlutterActivity() {
                     "address" to device.address
                 )
             }
+    }
+
+    private fun listBluetoothAutoPrinters(): List<Map<String, Any?>> {
+        // Show both paired Bluetooth Classic/SPP printers and nearby BLE devices in one list.
+        // Prefixing the id keeps the actual transport unambiguous when the user selects a device.
+        val merged = mutableListOf<Map<String, Any?>>()
+        try {
+            for (item in listBluetoothPrinters()) {
+                val address = item["id"]?.toString() ?: continue
+                val name = item["name"]?.toString() ?: "Bluetooth $address"
+                merged.add(
+                    mapOf(
+                        "id" to "classic:$address",
+                        "name" to "$name (Classic)",
+                        "transport" to "bluetooth",
+                        "address" to address
+                    )
+                )
+            }
+        } catch (_: Exception) {
+            // BLE discovery can still succeed even when the bonded-device list is unavailable.
+        }
+        try {
+            for (item in listBlePrinters()) {
+                val address = item["id"]?.toString() ?: continue
+                val name = item["name"]?.toString() ?: "BLE $address"
+                merged.add(
+                    mapOf(
+                        "id" to "ble:$address",
+                        "name" to "$name (BLE)",
+                        "transport" to "ble",
+                        "address" to address
+                    )
+                )
+            }
+        } catch (_: Exception) {
+            // Keep paired Classic printers visible if BLE scanning is unavailable.
+        }
+        return merged
+            .distinctBy { it["id"]?.toString() ?: "" }
+            .sortedBy { it["name"].toString().lowercase() }
+    }
+
+    private fun decodeBluetoothAutoDevice(deviceId: String?): Pair<String, String> {
+        if (deviceId.isNullOrBlank()) {
+            throw PrinterException("DEVICE_NOT_FOUND", "اختر طابعة Bluetooth")
+        }
+        return when {
+            deviceId.startsWith("classic:") -> Pair("bluetooth", deviceId.removePrefix("classic:"))
+            deviceId.startsWith("ble:") -> Pair("ble", deviceId.removePrefix("ble:"))
+            else -> Pair("auto", deviceId)
+        }
+    }
+
+    private fun testBluetoothAutoConnection(deviceId: String?) {
+        val decoded = decodeBluetoothAutoDevice(deviceId)
+        when (decoded.first) {
+            "bluetooth" -> testBluetoothConnection(decoded.second)
+            "ble" -> testBleConnection(decoded.second)
+            else -> {
+                try {
+                    testBluetoothConnection(decoded.second)
+                } catch (classicError: Exception) {
+                    try {
+                        testBleConnection(decoded.second)
+                    } catch (_: Exception) {
+                        if (classicError is PrinterException) throw classicError
+                        throw PrinterException("CONNECTION_FAILED", classicError.message ?: "تعذر الاتصال بطابعة Bluetooth")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun printBluetoothAuto(
+        deviceId: String?,
+        images: List<ByteArray>,
+        widthPx: Int,
+        autoCut: Boolean,
+        beep: Boolean
+    ) {
+        val decoded = decodeBluetoothAutoDevice(deviceId)
+        when (decoded.first) {
+            "bluetooth" -> printBluetooth(decoded.second, images, widthPx, autoCut, beep)
+            "ble" -> printBle(decoded.second, images, widthPx, autoCut, beep)
+            else -> {
+                try {
+                    printBluetooth(decoded.second, images, widthPx, autoCut, beep)
+                } catch (classicError: Exception) {
+                    try {
+                        printBle(decoded.second, images, widthPx, autoCut, beep)
+                    } catch (_: Exception) {
+                        if (classicError is PrinterException) throw classicError
+                        throw PrinterException("PRINT_FAILED", classicError.message ?: "فشلت الطباعة عبر Bluetooth")
+                    }
+                }
+            }
+        }
     }
 
 

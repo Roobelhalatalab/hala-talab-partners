@@ -349,6 +349,7 @@ class _StoreSettingsPageState extends State<_StoreSettingsPage> {
     bool cancellations = map['cancellations'] != false;
     bool statusChanges = map['status_changes'] != false;
     bool sound = map['sound'] != false;
+    bool repeatingRing = map['repeating_ring'] != false;
     final result = await showDialog<bool>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (context, setLocal) => AlertDialog(
       title: Row(children: [const Icon(Icons.notifications_active_outlined, color: AppColors.orange), const SizedBox(width: 10), Expanded(child: Text(s.t('orderNotifications')))]),
       content: SizedBox(width: _adaptiveDialogWidth(context, maxWidth: 520), child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -356,10 +357,11 @@ class _StoreSettingsPageState extends State<_StoreSettingsPage> {
         SwitchListTile.adaptive(value: cancellations, onChanged: (v) => setLocal(() => cancellations = v), title: Text(s.t('notifyCancellations')), secondary: const Icon(Icons.cancel_outlined)),
         SwitchListTile.adaptive(value: statusChanges, onChanged: (v) => setLocal(() => statusChanges = v), title: Text(s.t('notifyStatusChanges')), secondary: const Icon(Icons.sync_rounded)),
         SwitchListTile.adaptive(value: sound, onChanged: (v) => setLocal(() => sound = v), title: Text(s.t('notificationSound')), secondary: const Icon(Icons.volume_up_outlined)),
+        SwitchListTile.adaptive(value: repeatingRing, onChanged: (v) => setLocal(() => repeatingRing = v), title: const Text('رنة الطلبات المتكررة'), subtitle: const Text('5 ثوانٍ كل 15 ثانية حتى قبول الطلب أو رفضه'), secondary: const Icon(Icons.notifications_active_outlined)),
       ])),
       actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(MaterialLocalizations.of(context).cancelButtonLabel)), FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(s.t('saveChanges')))],
     )));
-    if (result == true) await _updateExtraSettings({'order_notification_settings': {'new_orders': newOrders, 'cancellations': cancellations, 'status_changes': statusChanges, 'sound': sound}});
+    if (result == true) await _updateExtraSettings({'order_notification_settings': {'new_orders': newOrders, 'cancellations': cancellations, 'status_changes': statusChanges, 'sound': sound, 'repeating_ring': repeatingRing}});
   }
 
   Future<void> _openOrderProductImagesSetting() async {

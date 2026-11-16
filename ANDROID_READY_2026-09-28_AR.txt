@@ -1,0 +1,36 @@
+هلا طلب – الشركاء / نسخة Android جاهزة للمراجعة
+التاريخ: 2026-09-28
+
+الحالة:
+- المصدر مبني من آخر ZIP للشركاء المستخدم في عمل iPhone.
+- التعديلات المشتركة الحديثة داخل lib/ محفوظة كما هي.
+- package: com.halatalab.partners
+- الإصدار الحالي في pubspec.yaml: 1.0.1+22
+- google-services.json موجود.
+- صلاحيات الإشعارات والموقع وBluetooth/USB موجودة.
+- قناة Firebase الافتراضية: hala_talab_orders
+- Waze query موجود.
+- كود الطباعة Android في MainActivity محفوظ.
+
+توقيع Android:
+- android/key.properties غير موجود في المصدر.
+- android/hala-talab-partners-upload-key.jks غير موجود في المصدر.
+- المطلوب استرجاع المفتاح الأصلي المستخدم سابقًا في Google Play.
+- alias المعروف من توثيق المشروع: hala-talab-partners
+- اسم الملف المعروف: hala-talab-partners-upload-key.jks
+- لا تنشئ مفتاحًا جديدًا بدل المفتاح القديم.
+
+تعديل أمان البناء:
+- Debug/التجربة يمكن تهيئتها حتى لو key.properties غير موجود.
+- أي Release/AAB يتوقف برسالة واضحة إذا مفتاح التوقيع الأصلي غير موجود.
+- android/key.properties.example موجود كقالب فقط ولا يحتوي كلمات مرور حقيقية.
+
+قبل رفع AAB إلى Google Play:
+1) ضع hala-talab-partners-upload-key.jks داخل android/
+2) انسخ android/key.properties.example إلى android/key.properties
+3) املأ كلمات المرور الأصلية فقط
+4) ابنِ AAB Release
+5) تأكد أن versionCode أكبر من 3 (الحالي 22)
+
+ملاحظة:
+هذه الحزمة لا تغيّر إعدادات iOS ولا تحذفها، لأن lib/ مشترك بين Android وiOS.

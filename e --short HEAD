@@ -1,0 +1,49 @@
+workflows:
+  partners-ios:
+    name: Hala Talab Partners iOS
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    integrations:
+      app_store_connect: Codemagic
+
+    environment:
+      groups:
+        - hala_talab_partners_env
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.halatalab.partners
+      flutter: stable
+      xcode: latest
+
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+      - name: Sync iOS CocoaPods
+        script: |
+          cd ios
+          pod install --repo-update
+
+      - name: Set up iOS code signing
+        script: |
+          xcode-project use-profiles
+
+      - name: Build iOS IPA
+        script: |
+          flutter build ipa --release \
+            --dart-define="SUPABASE_URL=$SUPABASE_URL" \
+            --dart-define="SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" \
+            --dart-define="MAPBOX_ACCESS_TOKEN=$MAPBOX_ACCESS_TOKEN" \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+        submit_to_app_store: false

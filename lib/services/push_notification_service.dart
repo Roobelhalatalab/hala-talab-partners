@@ -13,6 +13,34 @@ Future<void> halaTalabPartnerFirebaseBackgroundHandler(RemoteMessage message) as
   try {
     await Firebase.initializeApp();
   } catch (_) {}
+  // Android background isolates cannot call MainActivity's MethodChannel.
+  // Remember only merchant new-order IDs, then validate against Supabase when
+  // the merchant dashboard becomes active again. Never start a service here.
+  if (defaultTargetPlatform != TargetPlatform.android ||
+      message.data['notification_type']?.toString().toLowerCase() != 'new_order') {
+    return;
+  }
+  final orderId = message.data['order_id']?.toString().trim() ?? '';
+  final storeId = message.data['store_id']?.toString().trim() ?? '';
+  if (orderId.isEmpty || storeId.isEmpty) return;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final entries = prefs.getStringList('hala_merchant_background_orders') ?? <String>[];
+    final now = DateTime.now().millisecondsSinceEpoch;
+    entries.removeWhere((item) {
+      final parts = item.split('|');
+      final timestamp = parts.length == 3 ? int.tryParse(parts[2]) : null;
+      return timestamp == null || now - timestamp > 120000;
+    });
+    final entry = '$storeId|$orderId|$now';
+    entries.removeWhere((item) => item.startsWith('$storeId|$orderId|'));
+    entries.add(entry);
+    await prefs.setStringList('hala_merchant_background_orders',
+        entries.length > 20 ? entries.sublist(entries.length - 20) : entries);
+  } catch (_) {
+    // Never interfere with normal FCM delivery.
+  }
 }
 
 /// Hala Talab Partners push registration.

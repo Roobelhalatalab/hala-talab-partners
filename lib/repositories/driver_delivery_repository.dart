@@ -12,6 +12,79 @@ class DriverDeliveryRepository {
 
   SupabaseClient get _client => Supabase.instance.client;
 
+  Future<bool> isHalaDriver() async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return false;
+    final row = await _client.from('driver_delivery_scope')
+        .select('driver_type').eq('driver_id', uid).maybeSingle();
+    return row?['driver_type'] == 'hala';
+  }
+
+  // Hala Talab directed dispatch (separate from legacy delivery offers).
+  // Requires the Stage 12 RPCs to be safely deployed before these are called.
+  Future<List<String>> getEligibleHalaDrivers(String orderId) async {
+    final result = await _client.rpc(
+      'hala_store_eligible_directed_drivers_v1',
+      params: {'p_order_id': orderId},
+    );
+    if (result is! List) return const <String>[];
+    return result.whereType<Map>().map((row) => row['driver_id']?.toString())
+        .whereType<String>().toList();
+  }
+
+  Future<List<Map<String, dynamic>>> getNamedEligibleHalaDrivers(String orderId) async {
+    final result = await _client.rpc('hala_store_eligible_directed_drivers_named_v1',
+        params: {'p_order_id': orderId});
+    if (result is! List) return const [];
+    return result.whereType<Map>().map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  Future<Map<String, dynamic>?> getHalaDirectedOfferStatus(String orderId) async {
+    final result = await _client.rpc('hala_store_directed_offer_status_v1',
+        params: {'p_order_id': orderId});
+    if (result is List && result.isNotEmpty && result.first is Map) {
+      return Map<String, dynamic>.from(result.first as Map);
+    }
+    return null;
+  }
+
+  Future<String> sendHalaDirectedOffer({
+    required String orderId,
+    required String driverId,
+  }) async {
+    final result = await _client.rpc(
+      'hala_store_send_directed_offer_v1',
+      params: {'p_order_id': orderId, 'p_driver_id': driverId},
+    );
+    if (result == null) throw const AuthException('Directed offer was not created');
+    return result.toString();
+  }
+
+  Future<int> broadcastHalaDirectedOffer(String orderId) async {
+    final result = await _client.rpc('hala_store_broadcast_directed_offer_v1',
+        params: {'p_order_id': orderId});
+    return (result as num).toInt();
+  }
+
+  Future<List<Map<String, dynamic>>> getMyHalaDirectedOffers() async {
+    final result = await _client.rpc('hala_driver_directed_offer_details_v1');
+    if (result is! List) return const <Map<String, dynamic>>[];
+    return result.whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  Future<String> decideHalaDirectedOffer({
+    required String offerId,
+    required bool accept,
+  }) async {
+    final result = await _client.rpc(
+      'hala_driver_decide_directed_offer_v1',
+      params: {'p_offer_id': offerId, 'p_accept': accept},
+    );
+    if (result == null) throw const AuthException('Directed offer decision failed');
+    return result.toString();
+  }
+
   Future<Map<String, dynamic>?> getNextAvailableOffer() async {
     final result = await _client.rpc('get_available_driver_delivery_offer');
     if (result is List && result.isNotEmpty) {
