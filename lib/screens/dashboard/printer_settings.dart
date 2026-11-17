@@ -1,10 +1,7 @@
 part of 'partner_dashboard.dart';
 
 class _PrinterSettingsPage extends StatefulWidget {
-  const _PrinterSettingsPage({
-    required this.store,
-    required this.currentLocale,
-  });
+  const _PrinterSettingsPage({required this.store, required this.currentLocale});
 
   final Map<String, dynamic>? store;
   final Locale currentLocale;
@@ -52,15 +49,9 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
     ]);
     if (!mounted) return;
     final loadedSettings = results[0] as ReceiptPrinterSettings;
-    final settings =
-        defaultTargetPlatform == TargetPlatform.iOS &&
-            (loadedSettings.directTransport == 'bluetooth' ||
-                loadedSettings.directTransport == 'usb' ||
-                loadedSettings.directTransport == 'bluetooth_auto')
-        ? loadedSettings.copyWith(
-            directTransport: 'auto',
-            clearDirectDevice: true,
-          )
+    final settings = defaultTargetPlatform == TargetPlatform.iOS &&
+            (loadedSettings.directTransport == 'bluetooth' || loadedSettings.directTransport == 'usb')
+        ? loadedSettings.copyWith(directTransport: 'auto', clearDirectDevice: true)
         : loadedSettings;
     setState(() {
       _settings = settings;
@@ -80,8 +71,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
 
   ReceiptPrinterSettings _normalizedSettings([ReceiptPrinterSettings? source]) {
     final base = source ?? _settings;
-    final custom =
-        double.tryParse(_customWidth.text.trim()) ?? base.customPaperWidthMm;
+    final custom = double.tryParse(_customWidth.text.trim()) ?? base.customPaperWidthMm;
     final port = int.tryParse(_networkPort.text.trim()) ?? base.networkPort;
     return base.copyWith(
       customPaperWidthMm: custom.clamp(40, 150).toDouble(),
@@ -99,9 +89,9 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
       if (!mounted) return;
       setState(() => _settings = normalized);
       if (showMessage) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('تم حفظ إعدادات الطابعة')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حفظ إعدادات الطابعة')),
+        );
       }
       if (popAfter) Navigator.pop(context);
     } finally {
@@ -128,17 +118,11 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
       next = _settings.copyWith(clearPrinter: true);
     } else {
       final printer = _printers.firstWhere((p) => p.url == value);
-      next = _settings.copyWith(
-        printerUrl: printer.url,
-        printerName: printer.name,
-      );
+      next = _settings.copyWith(printerUrl: printer.url, printerName: printer.name);
     }
     await _persistSettingsSilently(next);
     if (!mounted) return;
-    setState(() {
-      _connectionOk = null;
-      _connectionMessage = 'لم يتم اختبار الاتصال بعد';
-    });
+    setState(() { _connectionOk = null; _connectionMessage = 'لم يتم اختبار الاتصال بعد'; });
     final label = next.printerName?.trim();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -163,10 +147,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
 
   Future<void> _setConnectionMode(String value) async {
     final next = _settings.copyWith(connectionMode: value);
-    setState(() {
-      _connectionOk = null;
-      _connectionMessage = 'لم يتم اختبار الاتصال بعد';
-    });
+    setState(() { _connectionOk = null; _connectionMessage = 'لم يتم اختبار الاتصال بعد'; });
     await _persistSettingsSilently(next);
     if (value == 'direct' && next.directTransport != 'network') {
       await _refreshDirectDevices(requestPermission: false);
@@ -193,16 +174,10 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
   Future<void> _refreshDirectDevices({bool requestPermission = true}) async {
     if (_settings.directTransport == 'network') return;
     setState(() => _directLoading = true);
-    if ((_settings.directTransport == 'bluetooth' ||
-            _settings.directTransport == 'ble' ||
-            _settings.directTransport == 'bluetooth_auto' ||
-            _settings.directTransport == 'auto') &&
-        requestPermission) {
+    if ((_settings.directTransport == 'bluetooth' || _settings.directTransport == 'ble' || _settings.directTransport == 'auto') && requestPermission) {
       await DirectThermalPrinterService.instance.requestBluetoothPermission();
     }
-    final devices = await DirectThermalPrinterService.instance.listDevices(
-      _settings.directTransport,
-    );
+    final devices = await DirectThermalPrinterService.instance.listDevices(_settings.directTransport);
     if (!mounted) return;
     setState(() {
       _directDevices = devices;
@@ -212,24 +187,14 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
 
   Future<void> _selectDirectPrinter(String? id) async {
     if (id == null) {
-      await _persistSettingsSilently(
-        _settings.copyWith(clearDirectDevice: true),
-      );
+      await _persistSettingsSilently(_settings.copyWith(clearDirectDevice: true));
       return;
     }
     final device = _directDevices.firstWhere((e) => e.id == id);
     await _persistSettingsSilently(
-      _settings.copyWith(
-        directDeviceId: device.id,
-        directDeviceName: device.name,
-      ),
+      _settings.copyWith(directDeviceId: device.id, directDeviceName: device.name),
     );
-    if (mounted) {
-      setState(() {
-        _connectionOk = null;
-        _connectionMessage = 'لم يتم اختبار الاتصال بعد';
-      });
-    }
+    if (mounted) setState(() { _connectionOk = null; _connectionMessage = 'لم يتم اختبار الاتصال بعد'; });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('تم حفظ الطابعة المباشرة: ${device.name}')),
@@ -273,12 +238,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
         'total': 15000,
         'notes': 'هذه ورقة اختبار للطابعة',
         'order_items': [
-          {
-            'product_name': 'وجبة تجريبية',
-            'quantity': 2,
-            'unit_price': 5000,
-            'notes': 'بدون بصل',
-          },
+          {'product_name': 'وجبة تجريبية', 'quantity': 2, 'unit_price': 5000, 'notes': 'بدون بصل'},
           {'product_name': 'مشروب', 'quantity': 1, 'unit_price': 5000},
         ],
       },
@@ -289,9 +249,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
     );
     if (!mounted) return;
     setState(() => _testing = false);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(result.message)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
   }
 
   Widget _section(String title, List<Widget> children) {
@@ -305,10 +263,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-          ),
+          Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
           const SizedBox(height: 10),
           ...children,
         ],
@@ -316,13 +271,26 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
     );
   }
 
+  String _directDevicePickerLabel() {
+    if (_settings.directTransport == 'auto') {
+      return defaultTargetPlatform == TargetPlatform.iOS
+          ? 'طابعات Bluetooth BLE القريبة'
+          : 'طابعات Bluetooth القريبة والمقترنة';
+    }
+    if (_settings.directTransport == 'bluetooth') {
+      return 'طابعات Bluetooth Classic المقترنة';
+    }
+    if (_settings.directTransport == 'ble') {
+      return 'أجهزة Bluetooth Low Energy القريبة';
+    }
+    return 'طابعات USB المتصلة';
+  }
+
   String _currentPrinterLabel() {
     if (_settings.usesDirectPrinter) {
       if (_settings.directTransport == 'network') {
         final host = _networkHost.text.trim();
-        return host.isEmpty
-            ? 'لم يتم إدخال IP للطابعة'
-            : '$host:${_networkPort.text.trim().isEmpty ? '9100' : _networkPort.text.trim()}';
+        return host.isEmpty ? 'لم يتم إدخال IP للطابعة' : '$host:${_networkPort.text.trim().isEmpty ? '9100' : _networkPort.text.trim()}';
       }
       return _settings.directDeviceName?.trim().isNotEmpty == true
           ? _settings.directDeviceName!.trim()
@@ -336,12 +304,10 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 700;
-    final selectedPrinterValue =
-        _printers.any((p) => p.url == _settings.printerUrl)
+    final selectedPrinterValue = _printers.any((p) => p.url == _settings.printerUrl)
         ? _settings.printerUrl
         : null;
-    final selectedDirectValue =
-        _directDevices.any((p) => p.id == _settings.directDeviceId)
+    final selectedDirectValue = _directDevices.any((p) => p.id == _settings.directDeviceId)
         ? _settings.directDeviceId
         : null;
 
@@ -363,34 +329,18 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
                             title: const Text('تفعيل الطباعة'),
-                            subtitle: const Text(
-                              'يظهر زر الطباعة للطلبات المقبولة وقيد التنفيذ.',
-                            ),
+                            subtitle: const Text('يظهر زر الطباعة للطلبات المقبولة وقيد التنفيذ.'),
                             value: _settings.enabled,
                             onChanged: _setPrintingEnabled,
                           ),
                           DropdownButtonFormField<String>(
                             initialValue: _settings.connectionMode,
-                            decoration: const InputDecoration(
-                              labelText: 'طريقة الاتصال',
-                            ),
+                            decoration: const InputDecoration(labelText: 'طريقة الاتصال'),
                             items: const [
-                              DropdownMenuItem(
-                                value: 'system',
-                                child: Text(
-                                  'خدمة الطباعة في الجهاز (متوافقة عامة)',
-                                ),
-                              ),
-                              DropdownMenuItem(
-                                value: 'direct',
-                                child: Text('اتصال حراري مباشر ESC/POS'),
-                              ),
+                              DropdownMenuItem(value: 'system', child: Text('خدمة الطباعة في الجهاز (متوافقة عامة)')),
+                              DropdownMenuItem(value: 'direct', child: Text('اتصال حراري مباشر ESC/POS')),
                             ],
-                            onChanged: _settings.enabled
-                                ? (v) {
-                                    if (v != null) _setConnectionMode(v);
-                                  }
-                                : null,
+                            onChanged: _settings.enabled ? (v) { if (v != null) _setConnectionMode(v); } : null,
                           ),
                           const SizedBox(height: 10),
                           if (!_settings.usesDirectPrinter) ...[
@@ -404,19 +354,12 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                       hintText: 'اختر طابعة واحفظها مرة واحدة',
                                     ),
                                     items: [
-                                      ..._printers.map(
-                                        (p) => DropdownMenuItem<String?>(
-                                          value: p.url,
-                                          child: Text(
-                                            '${p.name}${p.isDefault ? ' • افتراضية' : ''}',
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ),
+                                      ..._printers.map((p) => DropdownMenuItem<String?>(
+                                            value: p.url,
+                                            child: Text('${p.name}${p.isDefault ? ' • افتراضية' : ''}', overflow: TextOverflow.ellipsis),
+                                          )),
                                     ],
-                                    onChanged: _settings.enabled
-                                        ? _selectPrinter
-                                        : null,
+                                    onChanged: _settings.enabled ? _selectPrinter : null,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -429,59 +372,23 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'اختر الطابعة مرة واحدة. التطبيق يحاول الطباعة بنقرة واحدة مباشرة. إذا منع Android أو تعريف الطابعة الطباعة الصامتة (كما يحدث مع بعض Canon/Epson العامة)، ستظهر نافذة النظام للتأكيد. الطابعات الحرارية الشبكية ESC/POS عبر IP تطبع مباشرة بدون نافذة.',
-                              style: const TextStyle(
-                                color: AppColors.muted,
-                                fontSize: 12,
-                              ),
+                              'اختر الطابعة مرة واحدة. التطبيق يحاول الطباعة بنقرة واحدة مباشرة. إذا منع النظام أو تعريف الطابعة الطباعة الصامتة (كما يحدث مع بعض Canon/Epson العامة)، ستظهر نافذة النظام للتأكيد. الطابعات الحرارية الشبكية ESC/POS عبر IP تطبع مباشرة بدون نافذة.',
+                              style: const TextStyle(color: AppColors.muted, fontSize: 12),
                             ),
                           ] else ...[
                             DropdownButtonFormField<String>(
                               initialValue: _settings.directTransport,
-                              decoration: const InputDecoration(
-                                labelText: 'نوع الاتصال المباشر',
-                              ),
+                              decoration: const InputDecoration(labelText: 'نوع الاتصال المباشر'),
                               items: [
-                                if (defaultTargetPlatform == TargetPlatform.iOS)
-                                  const DropdownMenuItem(
-                                    value: 'auto',
-                                    child: Text(
-                                      'Bluetooth تلقائي (أفضل توافق)',
-                                    ),
-                                  )
-                                else
-                                  const DropdownMenuItem(
-                                    value: 'bluetooth_auto',
-                                    child: Text(
-                                      'Bluetooth تلقائي (Classic + BLE)',
-                                    ),
-                                  ),
+                                const DropdownMenuItem(value: 'auto', child: Text('Bluetooth تلقائي (أفضل توافق)')),
                                 if (defaultTargetPlatform != TargetPlatform.iOS)
-                                  const DropdownMenuItem(
-                                    value: 'bluetooth',
-                                    child: Text(
-                                      'Bluetooth Classic حراري (SPP)',
-                                    ),
-                                  ),
-                                const DropdownMenuItem(
-                                  value: 'ble',
-                                  child: Text('Bluetooth Low Energy (BLE)'),
-                                ),
+                                  const DropdownMenuItem(value: 'bluetooth', child: Text('Bluetooth Classic حراري (SPP)')),
+                                const DropdownMenuItem(value: 'ble', child: Text('Bluetooth Low Energy (BLE)')),
                                 if (defaultTargetPlatform != TargetPlatform.iOS)
-                                  const DropdownMenuItem(
-                                    value: 'usb',
-                                    child: Text('USB'),
-                                  ),
-                                const DropdownMenuItem(
-                                  value: 'network',
-                                  child: Text('Wi‑Fi / LAN حراري مباشر (IP)'),
-                                ),
+                                  const DropdownMenuItem(value: 'usb', child: Text('USB')),
+                                const DropdownMenuItem(value: 'network', child: Text('Wi‑Fi / LAN حراري مباشر (IP)')),
                               ],
-                              onChanged: _settings.enabled
-                                  ? (v) {
-                                      if (v != null) _setDirectTransport(v);
-                                    }
-                                  : null,
+                              onChanged: _settings.enabled ? (v) { if (v != null) _setDirectTransport(v); } : null,
                             ),
                             const SizedBox(height: 10),
                             if (_settings.directTransport == 'network') ...[
@@ -499,8 +406,7 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                 keyboardType: TextInputType.number,
                                 decoration: const InputDecoration(
                                   labelText: 'Port',
-                                  helperText:
-                                      'غالبًا 9100 للطابعات الحرارية الشبكية ESC/POS',
+                                  helperText: 'غالبًا 9100 للطابعات الحرارية الشبكية ESC/POS',
                                 ),
                               ),
                             ] else ...[
@@ -510,136 +416,67 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                     child: DropdownButtonFormField<String?>(
                                       initialValue: selectedDirectValue,
                                       decoration: InputDecoration(
-                                        labelText:
-                                            _settings.directTransport == 'auto'
-                                            ? (defaultTargetPlatform ==
-                                                      TargetPlatform.iOS
-                                                  ? 'طابعات Bluetooth BLE القريبة'
-                                                  : 'طابعات Bluetooth القريبة والمقترنة')
-                                            : (_settings.directTransport ==
-                                                      'bluetooth_auto'
-                                                  ? 'كل طابعات Bluetooth المتاحة'
-                                                  : (_settings.directTransport ==
-                                                            'bluetooth'
-                                                        ? 'طابعات Bluetooth Classic المقترنة'
-                                                        : (_settings.directTransport ==
-                                                                  'ble'
-                                                              ? 'أجهزة Bluetooth Low Energy القريبة'
-                                                              : 'طابعات USB المتصلة'))),
+                                        labelText: _directDevicePickerLabel(),
                                       ),
                                       items: [
-                                        const DropdownMenuItem<String?>(
-                                          value: null,
-                                          child: Text('اختر الطابعة'),
-                                        ),
-                                        ..._directDevices.map(
-                                          (p) => DropdownMenuItem<String?>(
-                                            value: p.id,
-                                            child: Text(
-                                              p.name,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        ),
+                                        const DropdownMenuItem<String?>(value: null, child: Text('اختر الطابعة')),
+                                        ..._directDevices.map((p) => DropdownMenuItem<String?>(
+                                              value: p.id,
+                                              child: Text(p.name, overflow: TextOverflow.ellipsis),
+                                            )),
                                       ],
-                                      onChanged: _settings.enabled
-                                          ? _selectDirectPrinter
-                                          : null,
+                                      onChanged: _settings.enabled ? _selectDirectPrinter : null,
                                     ),
                                   ),
                                   const SizedBox(width: 8),
                                   IconButton.filledTonal(
-                                    onPressed: _directLoading
-                                        ? null
-                                        : () => _refreshDirectDevices(),
+                                    onPressed: _directLoading ? null : () => _refreshDirectDevices(),
                                     tooltip: 'السماح والبحث',
                                     icon: _directLoading
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
+                                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                                         : const Icon(Icons.search_rounded),
                                   ),
                                 ],
                               ),
-                              if (_settings.directTransport == 'bluetooth' ||
-                                  _settings.directTransport == 'ble' ||
-                                  _settings.directTransport ==
-                                      'bluetooth_auto' ||
-                                  _settings.directTransport == 'auto') ...[
+                              if (_settings.directTransport == 'bluetooth' || _settings.directTransport == 'ble' || _settings.directTransport == 'auto') ...[
                                 const SizedBox(height: 8),
                                 OutlinedButton.icon(
                                   onPressed: _openBluetoothSettings,
-                                  icon: const Icon(
-                                    Icons.bluetooth_searching_rounded,
-                                  ),
-                                  label: Text(
-                                    (_settings.directTransport == 'ble' ||
-                                            _settings.directTransport == 'auto')
-                                        ? 'فتح إعدادات Bluetooth'
-                                        : (_settings.directTransport ==
-                                                  'bluetooth_auto'
-                                              ? 'فتح إعدادات Bluetooth / إقران طابعة'
-                                              : 'إقران طابعة Bluetooth جديدة'),
-                                  ),
+                                  icon: const Icon(Icons.bluetooth_searching_rounded),
+                                  label: Text((_settings.directTransport == 'ble' || _settings.directTransport == 'auto')
+                                      ? 'فتح إعدادات Bluetooth'
+                                      : 'إقران طابعة Bluetooth جديدة'),
                                 ),
                               ],
                             ],
                             const SizedBox(height: 8),
                             const Text(
-                              'الاتصال المباشر يطبع ESC/POS من داخل هلا طلب بدون نافذة طباعة. على Android يدعم Bluetooth Classic وBLE وUSB وWi‑Fi/LAN. على iPhone يدعم BLE وWi‑Fi/LAN، بينما Bluetooth Classic العام يحتاج تعريف الشركة. الطابعات ذات البروتوكول الخاص تبقى على خدمة طباعة النظام.',
-                              style: TextStyle(
-                                color: AppColors.muted,
-                                fontSize: 12,
-                              ),
+                              'الاتصال المباشر يطبع ESC/POS من داخل هلا طلب بدون نافذة طباعة. على Android يدعم Bluetooth Classic (SPP) وBLE وUSB وWi‑Fi/LAN. على iPhone يدعم BLE وWi‑Fi/LAN، بينما Bluetooth Classic العام يحتاج MFi/تعريف الشركة. خيار Bluetooth تلقائي يختار المسار المتاح، ويبحث BLE عن قناة كتابة مناسبة تلقائيًا. الطابعات ذات البروتوكول/SDK الخاص بالشركة تبقى على خدمة طباعة النظام أو تعريف الشركة.',
+                              style: TextStyle(color: AppColors.muted, fontSize: 12),
                             ),
                           ],
                           const SizedBox(height: 10),
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               color: const Color(0xFFF8F9FB),
                               borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: const Color(0xFFE8EAEE),
-                              ),
+                              border: Border.all(color: const Color(0xFFE8EAEE)),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 Row(
                                   children: [
-                                    Icon(
-                                      Icons.print_rounded,
-                                      color: AppColors.orange,
-                                    ),
+                                    Icon(Icons.print_rounded, color: AppColors.orange),
                                     const SizedBox(width: 10),
                                     Expanded(
                                       child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          const Text(
-                                            'الطابعة الحالية',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: AppColors.muted,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
+                                          const Text('الطابعة الحالية', style: TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w700)),
                                           const SizedBox(height: 2),
-                                          Text(
-                                            _currentPrinterLabel(),
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w900,
-                                            ),
-                                          ),
+                                          Text(_currentPrinterLabel(), style: const TextStyle(fontWeight: FontWeight.w900)),
                                         ],
                                       ),
                                     ),
@@ -651,15 +488,11 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                     Icon(
                                       _connectionOk == true
                                           ? Icons.check_circle_rounded
-                                          : (_connectionOk == false
-                                                ? Icons.error_rounded
-                                                : Icons.help_outline_rounded),
+                                          : (_connectionOk == false ? Icons.error_rounded : Icons.help_outline_rounded),
                                       size: 20,
                                       color: _connectionOk == true
                                           ? Colors.green
-                                          : (_connectionOk == false
-                                                ? Colors.redAccent
-                                                : AppColors.muted),
+                                          : (_connectionOk == false ? Colors.redAccent : AppColors.muted),
                                     ),
                                     const SizedBox(width: 8),
                                     Expanded(child: Text(_connectionMessage)),
@@ -667,18 +500,9 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                                 ),
                                 const SizedBox(height: 10),
                                 OutlinedButton.icon(
-                                  onPressed:
-                                      !_settings.enabled || _checkingConnection
-                                      ? null
-                                      : _testConnection,
+                                  onPressed: !_settings.enabled || _checkingConnection ? null : _testConnection,
                                   icon: _checkingConnection
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
+                                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                                       : const Icon(Icons.cable_rounded),
                                   label: const Text('اختبار اتصال الطابعة'),
                                 ),
@@ -690,137 +514,56 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                         _section('الورق والتنسيق', [
                           DropdownButtonFormField<String>(
                             initialValue: _settings.paperWidth,
-                            decoration: const InputDecoration(
-                              labelText: 'عرض الورق',
-                            ),
+                            decoration: const InputDecoration(labelText: 'عرض الورق'),
                             items: const [
-                              DropdownMenuItem(
-                                value: '58',
-                                child: Text('58 mm'),
-                              ),
-                              DropdownMenuItem(
-                                value: '76',
-                                child: Text('76 mm'),
-                              ),
-                              DropdownMenuItem(
-                                value: '80',
-                                child: Text('80 mm'),
-                              ),
-                              DropdownMenuItem(
-                                value: '112',
-                                child: Text('112 mm'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'custom',
-                                child: Text('مخصص'),
-                              ),
+                              DropdownMenuItem(value: '58', child: Text('58 mm')),
+                              DropdownMenuItem(value: '76', child: Text('76 mm')),
+                              DropdownMenuItem(value: '80', child: Text('80 mm')),
+                              DropdownMenuItem(value: '112', child: Text('112 mm')),
+                              DropdownMenuItem(value: 'custom', child: Text('مخصص')),
                             ],
-                            onChanged: (v) {
-                              if (v != null) {
-                                  setState(
-                                    () => _settings = _settings.copyWith(
-                                      paperWidth: v,
-                                    ),
-                                  );
-                                }
-                            },
+                            onChanged: (v) { if (v != null) setState(() => _settings = _settings.copyWith(paperWidth: v)); },
                           ),
                           if (_settings.paperWidth == 'custom') ...[
                             const SizedBox(height: 10),
                             TextField(
                               controller: _customWidth,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              decoration: const InputDecoration(
-                                labelText: 'العرض المخصص بالـ mm',
-                                helperText: 'من 40 إلى 150 mm',
-                              ),
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: const InputDecoration(labelText: 'العرض المخصص بالـ mm', helperText: 'من 40 إلى 150 mm'),
                             ),
                           ],
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
                             initialValue: _settings.fontSize,
-                            decoration: const InputDecoration(
-                              labelText: 'حجم الخط',
-                            ),
+                            decoration: const InputDecoration(labelText: 'حجم الخط'),
                             items: const [
-                              DropdownMenuItem(
-                                value: 'small',
-                                child: Text('صغير'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'medium',
-                                child: Text('متوسط'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'large',
-                                child: Text('كبير'),
-                              ),
+                              DropdownMenuItem(value: 'small', child: Text('صغير')),
+                              DropdownMenuItem(value: 'medium', child: Text('متوسط')),
+                              DropdownMenuItem(value: 'large', child: Text('كبير')),
                             ],
-                            onChanged: (v) {
-                              if (v != null) {
-                                  setState(
-                                    () => _settings = _settings.copyWith(
-                                      fontSize: v,
-                                    ),
-                                  );
-                                }
-                            },
+                            onChanged: (v) { if (v != null) setState(() => _settings = _settings.copyWith(fontSize: v)); },
                           ),
                           const SizedBox(height: 10),
                           DropdownButtonFormField<int>(
                             initialValue: _settings.copyCount,
-                            decoration: const InputDecoration(
-                              labelText: 'عدد نسخ الفاتورة',
-                            ),
+                            decoration: const InputDecoration(labelText: 'عدد النسخ المطبوعة'),
                             items: const [
-                              DropdownMenuItem(
-                                value: 1,
-                                child: Text('نسخة واحدة'),
-                              ),
+                              DropdownMenuItem(value: 1, child: Text('نسخة واحدة')),
                               DropdownMenuItem(value: 2, child: Text('نسختان')),
+                              DropdownMenuItem(value: 3, child: Text('3 نسخ')),
                             ],
-                            onChanged: (v) {
-                              if (v != null) {
-                                  setState(
-                                    () => _settings = _settings.copyWith(
-                                      copyCount: v,
-                                    ),
-                                  );
-                                }
-                            },
+                            onChanged: (v) { if (v != null) setState(() => _settings = _settings.copyWith(copyCount: v)); },
                           ),
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
                             initialValue: _settings.language,
-                            decoration: const InputDecoration(
-                              labelText: 'لغة الطباعة',
-                            ),
+                            decoration: const InputDecoration(labelText: 'لغة الطباعة'),
                             items: const [
-                              DropdownMenuItem(
-                                value: 'store',
-                                child: Text('حسب لغة المتجر'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'ar',
-                                child: Text('العربية'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'en',
-                                child: Text('English'),
-                              ),
+                              DropdownMenuItem(value: 'store', child: Text('حسب لغة المتجر')),
+                              DropdownMenuItem(value: 'ar', child: Text('العربية')),
+                              DropdownMenuItem(value: 'en', child: Text('English')),
                             ],
-                            onChanged: (v) {
-                              if (v != null) {
-                                  setState(
-                                    () => _settings = _settings.copyWith(
-                                      language: v,
-                                    ),
-                                  );
-                                }
-                            },
+                            onChanged: (v) { if (v != null) setState(() => _settings = _settings.copyWith(language: v)); },
                           ),
                         ]),
                         const SizedBox(height: 14),
@@ -829,128 +572,63 @@ class _PrinterSettingsPageState extends State<_PrinterSettingsPage> {
                             contentPadding: EdgeInsets.zero,
                             leading: Icon(Icons.receipt_long_outlined),
                             title: Text('ورقة واحدة للمتجر والسائق'),
-                            subtitle: Text(
-                              'تتضمن بيانات الزبون، تفاصيل الأصناف والأسعار والمجموع، ويظهر QR الموقع في نهاية الورقة.',
-                            ),
+                            subtitle: Text('تتضمن بيانات الزبون، تفاصيل الأصناف والأسعار والمجموع، ويظهر QR الموقع في نهاية الورقة.'),
                           ),
                         ]),
                         const SizedBox(height: 14),
                         _section('محتوى الورقة', [
-                          _printOption(
-                            'رقم الطلب',
-                            _settings.showOrderNumber,
-                            (v) => _settings = _settings.copyWith(
-                              showOrderNumber: v,
-                            ),
-                          ),
-                          _printOption(
-                            'اسم الزبون',
-                            _settings.showCustomer,
-                            (v) =>
-                                _settings = _settings.copyWith(showCustomer: v),
-                          ),
-                          _printOption(
-                            'الأصناف والكميات',
-                            _settings.showItems,
-                            (v) => _settings = _settings.copyWith(showItems: v),
-                          ),
-                          _printOption(
-                            'الإضافات والخيارات',
-                            _settings.showExtras,
-                            (v) =>
-                                _settings = _settings.copyWith(showExtras: v),
-                          ),
-                          _printOption(
-                            'الملاحظات',
-                            _settings.showNotes,
-                            (v) => _settings = _settings.copyWith(showNotes: v),
-                          ),
-                          _printOption(
-                            'الأسعار',
-                            _settings.showPrices,
-                            (v) =>
-                                _settings = _settings.copyWith(showPrices: v),
-                          ),
-                          _printOption(
-                            'العنوان',
-                            _settings.showAddress,
-                            (v) =>
-                                _settings = _settings.copyWith(showAddress: v),
-                          ),
+                          _printOption('رقم الطلب', _settings.showOrderNumber, (v) => _settings = _settings.copyWith(showOrderNumber: v)),
+                          _printOption('اسم الزبون', _settings.showCustomer, (v) => _settings = _settings.copyWith(showCustomer: v)),
+                          _printOption('الأصناف والكميات', _settings.showItems, (v) => _settings = _settings.copyWith(showItems: v)),
+                          _printOption('الإضافات والخيارات', _settings.showExtras, (v) => _settings = _settings.copyWith(showExtras: v)),
+                          _printOption('الملاحظات', _settings.showNotes, (v) => _settings = _settings.copyWith(showNotes: v)),
+                          _printOption('الأسعار', _settings.showPrices, (v) => _settings = _settings.copyWith(showPrices: v)),
+                          _printOption('العنوان', _settings.showAddress, (v) => _settings = _settings.copyWith(showAddress: v)),
                         ]),
                         const SizedBox(height: 14),
                         _section('الأتمتة وميزات الطابعة', [
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
                             title: const Text('طباعة تلقائية بعد قبول الطلب'),
-                            subtitle: Text(
-                              _settings.usesDirectPrinter
-                                  ? 'تتطلب اختيار طابعة مباشرة أو إدخال IP صحيح.'
-                                  : 'تتطلب اختيار طابعة ثابتة أعلاه.',
-                            ),
+                            subtitle: Text(_settings.usesDirectPrinter
+                                ? 'تتطلب اختيار طابعة مباشرة أو إدخال IP صحيح.'
+                                : 'تتطلب اختيار طابعة ثابتة أعلاه.'),
                             value: _settings.autoPrintAfterAccept,
-                            onChanged: (v) => setState(
-                              () => _settings = _settings.copyWith(
-                                autoPrintAfterAccept: v,
-                              ),
-                            ),
+                            onChanged: (v) => setState(() => _settings = _settings.copyWith(autoPrintAfterAccept: v)),
                           ),
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text(
-                              'قص الورق تلقائيًا إذا كان مدعومًا',
-                            ),
-                            subtitle: Text(
-                              _settings.usesDirectPrinter
-                                  ? 'يُرسل أمر القص ESC/POS مباشرة للطابعة.'
-                                  : 'يعتمد التنفيذ الفعلي على تعريف الطابعة.',
-                            ),
+                            title: const Text('قص الورق تلقائيًا إذا كان مدعومًا'),
+                            subtitle: Text(_settings.usesDirectPrinter
+                                ? 'يُرسل أمر القص ESC/POS مباشرة للطابعة.'
+                                : 'يعتمد التنفيذ الفعلي على تعريف الطابعة.'),
                             value: _settings.autoCut,
-                            onChanged: (v) => setState(
-                              () => _settings = _settings.copyWith(autoCut: v),
-                            ),
+                            onChanged: (v) => setState(() => _settings = _settings.copyWith(autoCut: v)),
                           ),
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text(
-                              'جرس/تنبيه الطابعة إذا كان مدعومًا',
-                            ),
-                            subtitle: Text(
-                              _settings.usesDirectPrinter
-                                  ? 'يُرسل أمر تنبيه ESC/POS، وبعض الطابعات قد تتجاهله.'
-                                  : 'يعتمد التنفيذ الفعلي على تعريف الطابعة.',
-                            ),
+                            title: const Text('جرس/تنبيه الطابعة إذا كان مدعومًا'),
+                            subtitle: Text(_settings.usesDirectPrinter
+                                ? 'يُرسل أمر تنبيه ESC/POS، وبعض الطابعات قد تتجاهله.'
+                                : 'يعتمد التنفيذ الفعلي على تعريف الطابعة.'),
                             value: _settings.beep,
-                            onChanged: (v) => setState(
-                              () => _settings = _settings.copyWith(beep: v),
-                            ),
+                            onChanged: (v) => setState(() => _settings = _settings.copyWith(beep: v)),
                           ),
                         ]),
                         const SizedBox(height: 14),
                         OutlinedButton.icon(
                           onPressed: _testing ? null : _testPrint,
                           icon: _testing
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
+                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                               : const Icon(Icons.print_outlined),
                           label: const Text('طباعة اختبار'),
                         ),
                         const SizedBox(height: 8),
                         FilledButton.icon(
-                          onPressed: _saving
-                              ? null
-                              : () => _save(popAfter: true),
+                          onPressed: _saving ? null : () => _save(popAfter: true),
                           icon: const Icon(Icons.save_outlined),
                           label: const Text('حفظ إعدادات الطابعة'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.orange,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
+                          style: FilledButton.styleFrom(backgroundColor: AppColors.orange, padding: const EdgeInsets.symmetric(vertical: 14)),
                         ),
                       ],
                     ),

@@ -514,7 +514,6 @@ class _DriverAccountCenterScreenState extends State<_DriverAccountCenterScreen> 
           }),
         ),
         const SizedBox(height: 18),
-        _tile(icon: Icons.assignment_turned_in_outlined, title: 'طلبات سائقي هلا طلب', subtitle: 'طلبات كرمليس وبرطلة الموجهة إليك', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _HalaDirectedOffersScreen()))),
         Text(s.t('driverProfileSection'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
         _tile(icon: Icons.person_outline_rounded, title: s.t('driverPersonalInfo'), subtitle: p['address']?.toString(), onTap: _editProfile),

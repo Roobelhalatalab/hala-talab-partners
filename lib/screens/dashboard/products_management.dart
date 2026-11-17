@@ -55,29 +55,6 @@ class _ProductsManagementPageState extends State<_ProductsManagementPage> {
   List<Map<String, dynamic>> _shifts = const [];
   String? _activeShiftId;
   String _availability = 'all';
-  // Summary shortcut: show unavailable products across all categories.
-  bool _showAllUnavailable = false;
-  final GlobalKey _productsListKey = GlobalKey();
-
-  void _openUnavailableProducts() {
-    setState(() {
-      _showAllUnavailable = true;
-      _availability = 'unavailable';
-      _searchController.clear();
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final target = _productsListKey.currentContext;
-      if (target != null) {
-        Scrollable.ensureVisible(
-          target,
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeInOut,
-          alignment: 0.08,
-        );
-      }
-    });
-  }
   String _sort = 'menuOrder';
 
   @override
@@ -187,9 +164,9 @@ class _ProductsManagementPageState extends State<_ProductsManagementPage> {
   List<Map<String, dynamic>> get _visibleProducts {
     final q = _searchController.text.trim().toLowerCase();
     final selected = _selectedCategory;
-    if (selected == null && !_showAllUnavailable) return const [];
-    final selectedId = selected?['id']?.toString() ?? '';
-    final selectedName = (selected?['name']?.toString() ?? '').trim().toLowerCase();
+    if (selected == null) return const [];
+    final selectedId = selected['id']?.toString() ?? '';
+    final selectedName = (selected['name']?.toString() ?? '').trim().toLowerCase();
     var list = _products.where((p) {
       final name = (p['name']?.toString() ?? '').toLowerCase();
       final cat = (p['category_name']?.toString() ?? '').toLowerCase();
@@ -197,11 +174,11 @@ class _ProductsManagementPageState extends State<_ProductsManagementPage> {
       final sameCategory = productCategoryId.isNotEmpty
           ? productCategoryId == selectedId
           : cat.trim() == selectedName;
-      if (!_showAllUnavailable && !sameCategory) return false;
+      if (!sameCategory) return false;
       if (q.isNotEmpty && !name.contains(q) && !cat.contains(q)) return false;
       final available = p['is_available'] == true;
-      if ((_showAllUnavailable || _availability == 'unavailable') && available) return false;
-      if (!_showAllUnavailable && _availability == 'available' && !available) return false;
+      if (_availability == 'available' && !available) return false;
+      if (_availability == 'unavailable' && available) return false;
       return true;
     }).toList();
     if (_sort == 'menuOrder') {
@@ -426,7 +403,7 @@ class _ProductsManagementPageState extends State<_ProductsManagementPage> {
               Wrap(spacing:12,runSpacing:12,children:[
                 _MealStat(icon:_catalogIcon(businessType),label:_p55(context,'إجمالي المنتجات','کۆی بەرهەمەکان','Total products'),value:'${_products.length}',tone:AppColors.orange),
                 _MealStat(icon:Icons.check_circle_outline_rounded,label:_p55(context,'متاحة','بەردەست','Available'),value:'$available',tone:const Color(0xFF169447)),
-                _MealStat(icon:Icons.visibility_off_outlined,label:_p55(context,'غير متاحة','بەردەست نییە','Unavailable'),value:'${_products.length-available}',tone:const Color(0xFF4776D0),onTap:_openUnavailableProducts),
+                _MealStat(icon:Icons.visibility_off_outlined,label:_p55(context,'غير متاحة','بەردەست نییە','Unavailable'),value:'${_products.length-available}',tone:const Color(0xFF4776D0)),
                 _MealStat(icon:Icons.grid_view_rounded,label:_p55(context,'الأقسام','بەشەکان','Categories'),value:'${cats.length}',tone:const Color(0xFF7247C7)),
               ]),
               const SizedBox(height:16),
@@ -436,7 +413,7 @@ class _ProductsManagementPageState extends State<_ProductsManagementPage> {
                 availability:_availability,
                 sort:_sort,
                 onSearch:(_)=>setState((){}),
-                onAvailability:(v)=>setState(() { _availability=v; _showAllUnavailable=false; }),
+                onAvailability:(v)=>setState(()=>_availability=v),
                 onSort:(v)=>setState(()=>_sort=v),
               ),
               if (_shiftMode == 2 && _shifts.length >= 2) ...[
@@ -471,12 +448,11 @@ class _ProductsManagementPageState extends State<_ProductsManagementPage> {
                   child:Row(children:cats.map((c)=>_CategoryImageCard(
                     category:c,
                     selected:_selectedCategoryId==c['id']?.toString(),
-                    onTap:()=>setState(() { _selectedCategoryId=c['id']?.toString(); _showAllUnavailable=false; }),
+                    onTap:()=>setState(()=>_selectedCategoryId=c['id']?.toString()),
                   )).toList()),
                 ),
               ],
               const SizedBox(height:16),
-              SizedBox(key: _productsListKey, height: 1),
               if (_loading) const Padding(padding:EdgeInsets.all(48),child:Center(child:CircularProgressIndicator()))
               else if (_error != null) _ProductsErrorState(message:_error!,onRetry:_loadProducts)
               else if (products.isEmpty) _EmptyProductsState(businessType: businessType, onAdd:()=>_openEditor())
@@ -622,15 +598,15 @@ class _MealsHeader extends StatelessWidget {
 }
 
 class _MealStat extends StatelessWidget {
-  const _MealStat({required this.icon,required this.label,required this.value,required this.tone,this.onTap});
-  final IconData icon; final String label,value; final Color tone; final VoidCallback? onTap;
+  const _MealStat({required this.icon,required this.label,required this.value,required this.tone});
+  final IconData icon; final String label,value; final Color tone;
   @override Widget build(BuildContext context){
     final width=MediaQuery.sizeOf(context).width;
     final veryNarrow=width<350;
     final cardWidth=width>=900?210.0:veryNarrow?((width-30)/2).clamp(135.0,155.0).toDouble():165.0;
-    return InkWell(onTap:onTap,borderRadius:BorderRadius.circular(22),child:Container(width:cardWidth,padding:EdgeInsets.all(veryNarrow?12:18),decoration:BoxDecoration(color:tone.withValues(alpha:.055),borderRadius:BorderRadius.circular(22),border:Border.all(color:tone.withValues(alpha:.14))),child:Row(children:[
+    return Container(width:cardWidth,padding:EdgeInsets.all(veryNarrow?12:18),decoration:BoxDecoration(color:tone.withValues(alpha:.055),borderRadius:BorderRadius.circular(22),border:Border.all(color:tone.withValues(alpha:.14))),child:Row(children:[
       Container(width:veryNarrow?36:44,height:veryNarrow?36:44,decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(14)),child:Icon(icon,color:tone,size:veryNarrow?19:24)),SizedBox(width:veryNarrow?8:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:veryNarrow?10.5:12,fontWeight:FontWeight.w700,color:const Color(0xFF4C525E))),Text(value,style:TextStyle(fontSize:veryNarrow?19:23,fontWeight:FontWeight.w900,color:tone))]))
-    ])));
+    ]));
   }
 }
 

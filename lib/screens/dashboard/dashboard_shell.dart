@@ -18,224 +18,30 @@ class _AccountHomeScreen extends StatefulWidget {
   State<_AccountHomeScreen> createState() => _AccountHomeScreenState();
 }
 
-class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBindingObserver {
+class _AccountHomeScreenState extends State<_AccountHomeScreen> {
   static const MethodChannel _orderAlarm = MethodChannel('com.halatalab.partners/order_alarm');
   final Set<String> _recentAlarmOrderIds = <String>{};
-  final Set<String> _startingOrderIds = <String>{};
-  final Set<String> _ringingOrderIds = <String>{};
-  Timer? _alarmStatusTimer;
-  RealtimeChannel? _ringStatusChannel;
-  StreamSubscription<PartnerPushEvent>? _merchantPushRingSubscription;
-
-  Future<void> _configureNativeMerchantRing() async {
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      return;
-    }
-    try {
-      final storeId = _store?['id']?.toString().trim() ?? '';
-      final currentStore = storeId.isEmpty ? null : await AuthService.instance.getCurrentStore();
-      final raw = currentStore?['order_notification_settings'];
-      final settings = raw is Map ? raw : const <String, dynamic>{};
-      final enabled = storeId.isNotEmpty && settings['new_orders'] != false &&
-          settings['sound'] != false && settings['repeating_ring'] != false;
-      await _orderAlarm.invokeMethod<void>('configureMerchant', {
-        'storeId': storeId, 'enabled': enabled,
-      });
-    } catch (_) { /* Native ring must not break the dashboard. */ }
-  }
 
   Future<void> _stopOrderAlarm() async {
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      return;
-    }
+    if (defaultTargetPlatform != TargetPlatform.android) return;
     try { await _orderAlarm.invokeMethod<void>('stop'); } catch (_) {}
   }
 
   Future<void> _ringForNewOrder(Map<String, dynamic> order) async {
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      return;
-    }
+    if (defaultTargetPlatform != TargetPlatform.android) return;
     final orderId = order['id']?.toString() ?? '';
-    if (orderId.isEmpty || order['status']?.toString() != 'pending' ||
-        _recentAlarmOrderIds.contains(orderId) || !_startingOrderIds.add(orderId)) {
-      return;
-    }
+    if (orderId.isEmpty || !_recentAlarmOrderIds.add(orderId)) return;
+    // Avoid unbounded in-memory IDs over long merchant sessions.
+    if (_recentAlarmOrderIds.length > 100) _recentAlarmOrderIds.clear();
     try {
       // Respect the store's existing notification switches.
       final currentStore = await AuthService.instance.getCurrentStore();
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       final raw = currentStore?['order_notification_settings'];
       final settings = raw is Map ? raw : const <String, dynamic>{};
-      if (settings['new_orders'] == false || settings['sound'] == false || settings['repeating_ring'] == false) {
-        return;
-      }
-      // Register the pending order before awaiting the native channel. This
-      // prevents two concurrent pushes from both starting a fresh ring session.
-      final shouldStart = _ringingOrderIds.isEmpty;
-      _ringingOrderIds.add(orderId);
-      if (shouldStart) {
-        try {
-          await _orderAlarm.invokeMethod<void>('start', {'orderId': orderId});
-        } catch (_) {
-          _ringingOrderIds.remove(orderId);
-          rethrow;
-        }
-      }
-      _recentAlarmOrderIds.add(orderId);
-      if (_recentAlarmOrderIds.length > 100) {
-        _recentAlarmOrderIds..clear()..addAll(_ringingOrderIds);
-      }
-      _alarmStatusTimer ??= Timer.periodic(const Duration(seconds: 2), (_) => unawaited(_checkRingingOrders()));
-      _watchRingingOrderStatus();
-    } catch (_) { /* Realtime and normal push must never fail due to audio. */
-    } finally {
-      _startingOrderIds.remove(orderId);
-    }
-  }
-
-  void _watchRingingOrderStatus() {
-    _ringStatusChannel ??= Supabase.instance.client.channel('merchant-ring-order-status')
-      .onPostgresChanges(
-        event: PostgresChangeEvent.update,
-        schema: 'public',
-        table: 'orders',
-        callback: (payload) {
-          final id = payload.newRecord['id']?.toString() ?? '';
-          final status = payload.newRecord['status']?.toString() ?? '';
-          if (id.isEmpty || !_ringingOrderIds.contains(id) || status == 'pending') return;
-          _ringingOrderIds.remove(id);
-          unawaited(_orderAlarm.invokeMethod<void>('resolveOrder', {'orderId': id}).catchError((_) {}));
-          if (_ringingOrderIds.isEmpty) {
-            _alarmStatusTimer?.cancel();
-            _alarmStatusTimer = null;
-            unawaited(_stopOrderAlarm());
-          }
-        },
-      )
-      .subscribe();
-  }
-
-  Future<void> _checkRingingOrders() async {
-    if (_ringingOrderIds.isEmpty) {
-      _alarmStatusTimer?.cancel();
-      _alarmStatusTimer = null;
-      await _stopOrderAlarm();
-      return;
-    }
-    try {
-      final ids = _ringingOrderIds.toList();
-      final rows = await Supabase.instance.client.from('orders').select('id,status').inFilter('id', ids);
-      final stillPending = <String>{
-        for (final row in rows)
-          if (row['status']?.toString() == 'pending') row['id'].toString(),
-      };
-      final resolved = _ringingOrderIds.where((id) => !stillPending.contains(id)).toList();
-      _ringingOrderIds.removeAll(resolved);
-      for (final id in resolved) {
-        try { await _orderAlarm.invokeMethod<void>('resolveOrder', {'orderId': id}); } catch (_) {}
-      }
-      if (_ringingOrderIds.isEmpty) {
-        _alarmStatusTimer?.cancel();
-        _alarmStatusTimer = null;
-        await _stopOrderAlarm();
-      }
-    } catch (_) {
-      // Do not silence an unhandled order because of a transient network error.
-    }
-  }
-
-  // FCM can reach the foreground independently of Supabase Realtime. Verify
-  // ownership and pending status against the database before ringing: push
-  // payloads alone must never start a merchant alarm (or a driver alarm).
-  Future<void> _handleMerchantPushForRing(PartnerPushEvent event) async {
-    if (!mounted || defaultTargetPlatform != TargetPlatform.android ||
-        event.notificationType != 'new_order') {
-      return;
-    }
-    final storeId = _store?['id']?.toString().trim() ?? '';
-    final orderId = event.orderId;
-    if (storeId.isEmpty || orderId.isEmpty || _recentAlarmOrderIds.contains(orderId) ||
-        _startingOrderIds.contains(orderId)) {
-      return;
-    }
-    final payloadStoreId = event.data['store_id']?.toString().trim() ?? '';
-    if (payloadStoreId.isNotEmpty && payloadStoreId != storeId) {
-      return;
-    }
-    try {
-      final rows = await Supabase.instance.client
-          .from('orders')
-          .select('id,store_id,status')
-          .eq('id', orderId)
-          .eq('store_id', storeId)
-          .eq('status', 'pending')
-          .limit(1);
-      if (!mounted || rows.isEmpty) {
-        return;
-      }
-      await _ringForNewOrder(Map<String, dynamic>.from(rows.first));
-    } catch (_) {
-      // Push remains delivered normally even if the lookup fails.
-    }
-  }
-
-  // A push received while the Flutter UI was suspended is rechecked when the
-  // merchant returns. We do not play stale or other-store notifications.
-  Future<void> _consumeBackgroundMerchantOrders() async {
-    if (!mounted || defaultTargetPlatform != TargetPlatform.android) {
-      return;
-    }
-    final storeId = _store?['id']?.toString().trim() ?? '';
-    if (storeId.isEmpty) {
-      return;
-    }
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
-      const key = 'hala_merchant_background_orders';
-      final entries = prefs.getStringList(key) ?? <String>[];
-      if (entries.isEmpty) {
-        return;
-      }
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final remaining = <String>[];
-      final orderIds = <String>{};
-      for (final entry in entries) {
-        final parts = entry.split('|');
-        if (parts.length != 3) continue;
-        final timestamp = int.tryParse(parts[2]);
-        if (timestamp == null || timestamp > now || now - timestamp > 120000) continue;
-        if (parts[0] == storeId) {
-          orderIds.add(parts[1]);
-        } else {
-          remaining.add(entry);
-        }
-      }
-      await prefs.setStringList(key, remaining);
-      for (final orderId in orderIds) {
-        if (!mounted) {
-          return;
-        }
-        await _handleMerchantPushForRing(PartnerPushEvent(
-          data: {'notification_type': 'new_order', 'order_id': orderId, 'store_id': storeId},
-          openedByUser: false,
-        ));
-      }
-    } catch (_) {
-      // Audio recovery must not block the merchant dashboard.
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      unawaited(_consumeBackgroundMerchantOrders());
-      if (_ringingOrderIds.isNotEmpty) {
-        unawaited(_checkRingingOrders());
-      }
-    }
+      if (settings['new_orders'] == false || settings['sound'] == false) return;
+      await _orderAlarm.invokeMethod<void>('start');
+    } catch (_) { /* Realtime and normal push must never fail due to audio. */ }
   }
 
   int _selectedIndex = 0;
@@ -249,33 +55,15 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _store = widget.store == null ? null : Map<String, dynamic>.from(widget.store!);
-    unawaited(_configureNativeMerchantRing());
     _refreshUnreadNotifications();
     _startRealtimeNotifications();
-    unawaited(_consumeBackgroundMerchantOrders());
-    _merchantPushRingSubscription = PushNotificationService.instance.events.listen(
-      (event) => unawaited(_handleMerchantPushForRing(event)),
-    );
-    final openedPush = PushNotificationService.instance.takePendingOpenedEvent();
-    if (openedPush != null) {
-      unawaited(_handleMerchantPushForRing(openedPush));
-    }
     _notificationsTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshUnreadNotifications());
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _notificationsTimer?.cancel();
-    _alarmStatusTimer?.cancel();
-    final ringChannel = _ringStatusChannel;
-    _ringStatusChannel = null;
-    if (ringChannel != null) {
-      unawaited(Supabase.instance.client.removeChannel(ringChannel));
-    }
-    _merchantPushRingSubscription?.cancel();
     unawaited(_stopOrderAlarm());
     final channel = _notificationsChannel;
     if (channel != null) {
@@ -286,10 +74,8 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
 
 
   void _selectIndex(int index, {bool remember = true}) {
-    if (index == _selectedIndex) {
-      return;
-    }
-    // Viewing orders must not silence an unhandled order.
+    if (index == _selectedIndex) return;
+    if (index == 1) unawaited(_stopOrderAlarm());
     setState(() {
       if (remember) {
         _navigationHistory.remove(index);
@@ -302,9 +88,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
   Future<void> _startRealtimeNotifications() async {
     try {
       final storeId = _store?['id']?.toString();
-      if (storeId == null || storeId.isEmpty) {
-        return;
-      }
+      if (storeId == null || storeId.isEmpty) return;
 
       final previous = _notificationsChannel;
       if (previous != null) {
@@ -323,9 +107,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
               value: storeId,
             ),
             callback: (payload) {
-              if (!mounted) {
-                return;
-              }
+              if (!mounted) return;
               final record = Map<String, dynamic>.from(payload.newRecord);
               unawaited(_ringForNewOrder(record));
               final s = AppStrings.of(context);
@@ -404,9 +186,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
   Future<void> _refreshUnreadNotifications() async {
     try {
       final count = await AuthService.instance.getUnreadNotificationCount();
-      if (mounted) {
-        setState(() => _unreadNotifications = count);
-      }
+      if (mounted) setState(() => _unreadNotifications = count);
     } catch (_) {
       // The notifications table may not exist until the stage SQL is executed.
     }
@@ -417,19 +197,13 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
       context: context,
       builder: (_) => _StoreNotificationsDialog(
         onUnreadCountChanged: (count) {
-          if (mounted) {
-            setState(() => _unreadNotifications = count);
-          }
+          if (mounted) setState(() => _unreadNotifications = count);
         },
         onOpenOrder: (_) {
-          if (mounted) {
-            _selectIndex(1);
-          }
+          if (mounted) _selectIndex(1);
         },
         onOpenSupport: (ticketId) {
-          if (!mounted) {
-            return;
-          }
+          if (!mounted) return;
           Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => _StoreSupportInboxPage(
               storeId: _store?['id']?.toString(),
@@ -443,41 +217,29 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
   }
 
   Future<void> _toggleOpen(bool value) async {
-    if (_updatingOpenStatus) {
-      return;
-    }
+    if (_updatingOpenStatus) return;
     setState(() => _updatingOpenStatus = true);
     try {
       final updated = await AuthService.instance.updateStoreOpenStatus(value);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() => _store = updated);
     } on PostgrestException catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.message)),
       );
     } on AuthException catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.message)),
       );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('تعذر تغيير حالة المتجر: $error')),
       );
     } finally {
-      if (mounted) {
-        setState(() => _updatingOpenStatus = false);
-      }
+      if (mounted) setState(() => _updatingOpenStatus = false);
     }
   }
 
@@ -551,9 +313,7 @@ class _AccountHomeScreenState extends State<_AccountHomeScreen> with WidgetsBind
     return PopScope<Object?>(
       canPop: canLeaveShell,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop) {
-          return;
-        }
+        if (didPop) return;
         if (_navigationHistory.isNotEmpty) {
           final previous = _navigationHistory.removeLast();
           _selectIndex(previous, remember: false);

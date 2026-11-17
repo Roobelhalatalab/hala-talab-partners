@@ -1,12 +1,7 @@
 part of 'auth_flow.dart';
 
 class PartnerSignUpScreen extends StatefulWidget {
-  const PartnerSignUpScreen({
-    required this.initialRole,
-    required this.currentLocale,
-    required this.onLocaleChanged,
-    super.key,
-  });
+  const PartnerSignUpScreen({required this.initialRole, required this.currentLocale, required this.onLocaleChanged, super.key});
   final PartnerRole initialRole;
   final Locale currentLocale;
   final ValueChanged<Locale> onLocaleChanged;
@@ -50,8 +45,6 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
     try {
       final data = await SystemCategoriesRepository.instance.activeCategories();
       if (mounted) setState(() => _categories = data);
-    } catch (error) {
-      debugPrint('Store categories could not be loaded: $error');
     } finally {
       if (mounted) setState(() => _loadingCategories = false);
     }
@@ -61,18 +54,10 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
     final raw = error.toString().replaceFirst('Bad state: ', '');
     if (raw.contains('INVALID_IRAQI_PHONE')) return 'أدخل رقم هاتف عراقي صحيح.';
     if (raw.contains('INVALID_PIN')) return 'اختر PIN من 4 أرقام.';
-    if (raw.contains('ACCOUNT_ALREADY_EXISTS')) {
-        return 'هذا الرقم لديه حساب بالفعل. استخدم تسجيل الدخول.';
-      }
-    if (raw.contains('ROLE_MISMATCH_CUSTOMER')) {
-        return 'هذا الرقم مستخدم في تطبيق العميل.';
-      }
-    if (raw.contains('ROLE_MISMATCH_BUSINESS')) {
-      return 'هذا الرقم مستخدم لحساب متجر.';
-    }
-    if (raw.contains('ROLE_MISMATCH_DRIVER')) {
-        return 'هذا الرقم مستخدم لحساب سائق.';
-      }
+    if (raw.contains('ACCOUNT_ALREADY_EXISTS')) return 'هذا الرقم لديه حساب بالفعل. استخدم تسجيل الدخول.';
+    if (raw.contains('ROLE_MISMATCH_CUSTOMER')) return 'هذا الرقم مستخدم في تطبيق العميل.';
+    if (raw.contains('ROLE_MISMATCH_BUSINESS')) return 'هذا الرقم مستخدم لحساب متجر.';
+    if (raw.contains('ROLE_MISMATCH_DRIVER')) return 'هذا الرقم مستخدم لحساب سائق.';
     if (raw.contains('ACCOUNT_SUSPENDED')) return 'هذا الحساب موقوف إداريًا.';
     return 'تعذر إنشاء الحساب. حاول مرة أخرى.';
   }
@@ -82,41 +67,24 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
     final pin = _pinController.text.trim();
     if (!RegExp(r'^\d{11}$').hasMatch(_phoneController.text.trim())) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('رقم هاتف $_roleLabel يجب أن يتكون من 11 رقمًا.'),
-        ),
+        SnackBar(content: Text('رقم هاتف $_roleLabel يجب أن يتكون من 11 رقمًا.')),
       );
       return;
     }
     if (_nameController.text.trim().length < 2) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('أدخل الاسم الكامل')));
-      return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أدخل الاسم الكامل'))); return;
     }
     if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('اختر PIN من 4 أرقام')));
-      return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اختر PIN من 4 أرقام'))); return;
     }
     if (pin != _confirmPinController.text.trim()) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('PIN غير متطابق')));
-      return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN غير متطابق'))); return;
     }
     if (_role == PartnerRole.business && _businessCategory == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('اختر تصنيف المتجر')));
-      return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اختر تصنيف المتجر'))); return;
     }
     if (!_acceptedTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يجب الموافقة على الشروط والأحكام')),
-      );
-      return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('يجب الموافقة على الشروط والأحكام'))); return;
     }
 
     setState(() => _busy = true);
@@ -126,28 +94,17 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
         pin: pin,
         role: _roleName,
         fullName: _nameController.text,
-        businessType: _role == PartnerRole.business
-            ? _businessCategory?.legacyBusinessType
-            : null,
-        systemCategoryId: _role == PartnerRole.business
-            ? _businessCategory?.id
-            : null,
+        businessType: _role == PartnerRole.business ? _businessCategory?.legacyBusinessType : null,
+        systemCategoryId: _role == PartnerRole.business ? _businessCategory?.id : null,
       );
-      final authoritative = await AuthService.instance
-          .validateCurrentSessionRole(requestedRole: _roleName);
-      if (authoritative != _roleName) {
-          throw StateError('ROLE_MISMATCH_${authoritative.toUpperCase()}');
-        }
+      final authoritative = await AuthService.instance.validateCurrentSessionRole(requestedRole: _roleName);
+      if (authoritative != _roleName) throw StateError('ROLE_MISMATCH_${authoritative.toUpperCase()}');
       await AuthService.instance.unlockCurrentSession();
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
       AuthService.instance.refreshAuthGate();
     } catch (e) {
-      if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(_friendlyError(e))));
-        }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_friendlyError(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -172,7 +129,6 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 620),
                     child: Card(
-                      key: const Key('signup-card'),
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(28),
@@ -187,9 +143,10 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
                           children: [
                             Text(
                               'طلب انضمام $_roleLabel',
-                              key: const Key('signup-title'),
                               textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.headlineSmall
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineSmall
                                   ?.copyWith(fontWeight: FontWeight.w900),
                             ),
                             const SizedBox(height: 6),
@@ -211,10 +168,7 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
                                 ),
                                 ButtonSegment(
                                   value: PartnerRole.driver,
-                                  label: Text(
-                                    'سائق',
-                                    key: Key('signup-driver-tab'),
-                                  ),
+                                  label: Text('سائق'),
                                   icon: Icon(Icons.delivery_dining),
                                 ),
                               ],
@@ -302,7 +256,6 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
                             if (_role == PartnerRole.business) ...[
                               const SizedBox(height: 12),
                               DropdownButtonFormField<PartnerSystemCategory>(
-                                key: const Key('business-type-dropdown'),
                                 initialValue: _businessCategory,
                                 isExpanded: true,
                                 decoration: const InputDecoration(
@@ -322,8 +275,9 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
                                     .toList(),
                                 onChanged: _loadingCategories
                                     ? null
-                                    : (v) =>
-                                          setState(() => _businessCategory = v),
+                                    : (v) => setState(
+                                          () => _businessCategory = v,
+                                        ),
                               ),
                             ],
                             const SizedBox(height: 12),
@@ -333,8 +287,8 @@ class _PartnerSignUpScreenState extends State<PartnerSignUpScreen> {
                               onChanged: _busy
                                   ? null
                                   : (v) => setState(
-                                      () => _acceptedTerms = v ?? false,
-                                    ),
+                                        () => _acceptedTerms = v ?? false,
+                                      ),
                               title: const Text(
                                 'أوافق على الشروط والأحكام وسياسة الخصوصية',
                               ),

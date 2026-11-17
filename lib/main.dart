@@ -49,7 +49,7 @@ Future<void> main() async {
     publishableKey: SupabaseConfig.publishableKey,
   );
 
-  // Stage 214: lightweight foreground Presence for the admin online counter.
+  // Stage 214 iOS: lightweight foreground Presence for the admin online counter.
   // This does not touch push notifications, orders, printing, or maps.
   unawaited(OnlinePresenceService.instance.initialize());
 

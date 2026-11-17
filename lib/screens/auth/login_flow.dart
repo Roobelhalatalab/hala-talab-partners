@@ -225,7 +225,6 @@ class _PartnerLoginScreenState extends State<PartnerLoginScreen> {
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 560),
                     child: Card(
-                      key: const Key('login-card'),
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(28),
@@ -248,7 +247,6 @@ class _PartnerLoginScreenState extends State<PartnerLoginScreen> {
                             const SizedBox(height: 12),
                             Text(
                               'تسجيل دخول $_roleLabel',
-                              key: const Key('login-title'),
                               textAlign: TextAlign.center,
                               style: Theme.of(context)
                                   .textTheme

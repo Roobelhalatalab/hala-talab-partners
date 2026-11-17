@@ -1,31 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hala_talab_partners/app/hala_talab_partners_app.dart';
-import 'package:hala_talab_partners/core/supabase_config.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
-Future<void> _openApp(WidgetTester tester) async {
-  await tester.pumpWidget(const HalaTalabPartnersApp());
-  await tester.pump();
-  await tester.pumpAndSettle();
-}
 
 void main() {
-  setUpAll(() async {
-    SharedPreferences.setMockInitialValues({});
-    await Supabase.initialize(
-      url: SupabaseConfig.url,
-      publishableKey: SupabaseConfig.publishableKey,
-    );
-  });
-
-  setUp(() {
-    SharedPreferences.setMockInitialValues({});
-  });
-
   testWidgets('partner role screen loads', (tester) async {
-    await _openApp(tester);
+    await tester.pumpWidget(const HalaTalabPartnersApp());
+    await tester.pumpAndSettle();
 
     expect(find.text('مرحباً بك في هلا طلب'), findsOneWidget);
     expect(find.byKey(const Key('business-role-card')), findsOneWidget);
@@ -39,23 +19,24 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await _openApp(tester);
+    await tester.pumpWidget(const HalaTalabPartnersApp());
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('business-role-card')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('login-title')), findsOneWidget);
     expect(find.byKey(const Key('login-card')), findsOneWidget);
-    expect(find.text('تسجيل دخول المتجر'), findsOneWidget);
-    expect(find.text('رقم الهاتف'), findsOneWidget);
-    expect(find.text('PIN من 4 أرقام'), findsOneWidget);
+    expect(find.text('صاحب متجر'), findsOneWidget);
+    expect(find.text('متابعة باستخدام Apple'), findsOneWidget);
+    expect(find.byKey(const Key('language-menu')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('language can change to Kurdish without an exception', (
-    tester,
-  ) async {
-    await _openApp(tester);
+
+  testWidgets('language can change to Kurdish without an exception', (tester) async {
+    await tester.pumpWidget(const HalaTalabPartnersApp());
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('language-menu')).first);
     await tester.pumpAndSettle();
@@ -68,7 +49,8 @@ void main() {
   });
 
   testWidgets('language can change to English', (tester) async {
-    await _openApp(tester);
+    await tester.pumpWidget(const HalaTalabPartnersApp());
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('language-menu')).first);
     await tester.pumpAndSettle();
@@ -84,7 +66,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await _openApp(tester);
+    await tester.pumpWidget(const HalaTalabPartnersApp());
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('إنشاء حساب جديد'));
     await tester.pumpAndSettle();
@@ -101,7 +84,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await _openApp(tester);
+    await tester.pumpWidget(const HalaTalabPartnersApp());
+    await tester.pumpAndSettle();
     await tester.tap(find.text('إنشاء حساب جديد'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('signup-driver-tab')));
@@ -110,4 +94,5 @@ void main() {
     expect(find.byKey(const Key('business-type-dropdown')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
 }

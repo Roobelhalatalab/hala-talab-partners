@@ -96,14 +96,8 @@ language plpgsql
 set search_path = public
 as $$
 begin
-  if current_setting('hala.skip_category_shift_sync', true) = 'on' then
-    return new;
-  end if;
-  if new.shift_id is not null
-     and not exists (
-       select 1 from public.store_category_shifts links
-       where links.category_id = new.id
-     ) then
+  delete from public.store_category_shifts where category_id = new.id;
+  if new.shift_id is not null then
     insert into public.store_category_shifts(category_id, shift_id)
     values (new.id, new.shift_id)
     on conflict do nothing;
@@ -117,9 +111,12 @@ create trigger trg_sync_category_shift_link
 after insert or update of shift_id on public.product_categories
 for each row execute function public.hala_sync_category_shift_link();
 
--- NOTE 24: No automatic historical backfill. Existing legacy values must be
--- compared to explicit links with read-only diagnostics and approved case-by-case.
--- Intentionally omitted to avoid adding an unintended shift to existing menus.
+-- Synchronize existing promoted rows now.
+insert into public.store_category_shifts(category_id, shift_id)
+select c.id, c.shift_id
+from public.product_categories c
+where c.shift_id is not null
+on conflict do nothing;
 
 -- 5) Exact product/category integrity and legacy category_name compatibility.
 create or replace function public.hala_sync_product_category()

@@ -93,15 +93,15 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
     final lat = latText.isEmpty ? null : _coordinate(latText);
     final lng = lngText.isEmpty ? null : _coordinate(lngText);
     final invalidLocation = (latText.isEmpty != lngText.isEmpty) ||
-        (latText.isNotEmpty && (lat == null || !lat.isFinite || lat < -90 || lat > 90)) ||
-        (lngText.isNotEmpty && (lng == null || !lng.isFinite || lng < -180 || lng > 180));
+        (latText.isNotEmpty && (lat == null || lat < -90 || lat > 90)) ||
+        (lngText.isNotEmpty && (lng == null || lng < -180 || lng > 180));
     if (invalidLocation) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(AppStrings.of(context).t('storeLocationInvalid'))),
       );
       return;
     }
-    if (lat == null || lng == null) {
+    if (_deliveryAvailable && (lat == null || lng == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(AppStrings.of(context).t('storeLocationRequiredForDelivery'))),
       );
@@ -110,20 +110,6 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
     setState(() => _saving = true);
     final s = AppStrings.of(context);
     try {
-      final originZone = await AuthService.instance.resolveStoreOriginZone(lat, lng);
-      if (!mounted) return;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('منطقة المتجر'),
-          content: Text('الموقع ضمن ${originZone["area"]}، وزون المتجر: ${originZone["name"]}. هل تؤكد؟'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('تأكيد')),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
       await AuthService.instance.createStore(
         name: _name.text,
         description: _description.text,
@@ -156,10 +142,10 @@ class _StoreSetupScreenState extends State<StoreSetupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message)),
       );
-    } catch (error) {
+    } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error is StateError ? (error.message == 'STORE_OUTSIDE_DELIVERY_ZONES' ? 'موقع المتجر خارج المناطق المدعومة.' : error.message == 'STORE_ZONE_BOUNDARIES_OVERLAP' ? 'موقع المتجر يقع ضمن حدود متداخلة؛ يرجى مراجعة الإدارة.' : error.message) : s.t('authFailed'))),
+        SnackBar(content: Text(s.t('authFailed'))),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -1070,101 +1056,6 @@ class _DriverHomeScreen extends StatefulWidget {
 
 class _DriverHomeScreenState extends State<_DriverHomeScreen> {
   bool _online = false;
-  bool _isHalaDriver = false;
-  List<Map<String, dynamic>> _halaPendingOffers = const [];
-  bool _halaOffersLoading = false;
-  final Set<String> _halaDecisionBusy = {};
-  String? _halaExpandedOfferId;
-
-  Future<void> _refreshHalaHomeOffers() async {
-    if (!mounted || !_isHalaDriver || _halaOffersLoading) return;
-    _halaOffersLoading = true;
-    try {
-      final offers = await DriverDeliveryRepository.instance.getMyHalaDirectedOffers();
-      if (mounted) setState(() => _halaPendingOffers = offers);
-    } catch (error) {
-      // Keep the existing driver dashboard available when the directed RPC fails.
-      debugPrint('Hala directed offers refresh failed: $error');
-    } finally {
-      _halaOffersLoading = false;
-    }
-  }
-
-  Future<void> _decideHalaHomeOffer(String offerId, bool accept) async {
-    if (_halaDecisionBusy.contains(offerId)) return;
-    setState(() => _halaDecisionBusy.add(offerId));
-    try {
-      await DriverDeliveryRepository.instance.decideHalaDirectedOffer(
-        offerId: offerId, accept: accept);
-      if (!mounted) return;
-      setState(() {
-        _halaPendingOffers = _halaPendingOffers
-            .where((offer) => offer['offer_id']?.toString() != offerId).toList();
-        _halaExpandedOfferId = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(accept ? 'تم قبول طلب التوصيل' : 'تم رفض طلب التوصيل')));
-      await _refreshActiveOrders();
-      await _refreshHalaHomeOffers();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر تحديث الطلب: $error')));
-      }
-    } finally {
-      if (mounted) setState(() => _halaDecisionBusy.remove(offerId));
-    }
-  }
-
-  Widget _halaHomeOfferCard(Map<String, dynamic> offer) {
-    final id = offer['offer_id']?.toString() ?? '';
-    final number = offer['order_number']?.toString() ?? '—';
-    final store = offer['store_name']?.toString() ?? 'المتجر';
-    final area = offer['area_name']?.toString() ?? '—';
-    final address = offer['delivery_address']?.toString() ?? '';
-    final expanded = _halaExpandedOfferId == id;
-    final busy = _halaDecisionBusy.contains(id);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(padding: const EdgeInsets.all(14), child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InkWell(
-            onTap: () => setState(() => _halaExpandedOfferId = expanded ? null : id),
-            child: Row(children: [
-              const Icon(Icons.delivery_dining_rounded, color: AppColors.orange),
-              const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('طلب رقم $number • $store',
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                  Text('منطقة التوصيل: $area'),
-                  const Text('بانتظار قبولك', style: TextStyle(color: AppColors.orange)),
-                ])),
-              Icon(expanded ? Icons.expand_less : Icons.chevron_left),
-            ]),
-          ),
-          if (expanded) ...[
-            const Divider(height: 22),
-            Text('المطعم: $store'),
-            Text('رقم الطلب: $number'),
-            Text('منطقة التوصيل: $area'),
-            if (address.isNotEmpty) Text('العنوان: $address'),
-            const SizedBox(height: 12),
-            Wrap(spacing: 10, runSpacing: 8, children: [
-              FilledButton(onPressed: busy || id.isEmpty ? null
-                : () => _decideHalaHomeOffer(id, true),
-                child: const Text('قبول الطلب')),
-              OutlinedButton(onPressed: busy || id.isEmpty ? null
-                : () => _decideHalaHomeOffer(id, false),
-                child: const Text('رفض الطلب')),
-            ]),
-          ],
-        ],
-      )),
-    );
-  }
-
   bool _loading = true;
   bool _savingOnline = false;
   bool _checkingOffer = false;
@@ -1197,7 +1088,6 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
     _driverNotificationsTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshDriverNotifications());
     _driverActiveOrdersTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _refreshActiveOrders();
-      _refreshHalaHomeOffers();
       if (_activeOrders.isNotEmpty) _refreshDriverLocation();
     });
     _pushEventsSub = PushNotificationService.instance.events.listen(_handlePushEvent);
@@ -1220,15 +1110,6 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
     if (!mounted) return;
     await _refreshDriverNotifications();
     if (!mounted || event.orderId.isEmpty) return;
-    if (_isHalaDriver) {
-      await _refreshHalaHomeOffers();
-      if (!mounted) return;
-      if (event.openedByUser) {
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const _HalaDirectedOffersScreen()));
-      }
-      return;
-    }
     if (event.openedByUser) {
       await _openOrClaimOrder(event.orderId);
       return;
@@ -1259,7 +1140,7 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
   }
 
   Future<void> _openOrClaimOrder(String orderId) async {
-    if (!mounted || orderId.trim().isEmpty || _isHalaDriver) return;
+    if (!mounted || orderId.trim().isEmpty) return;
     final s = AppStrings.of(context);
     try {
       await _refreshActiveOrders();
@@ -1321,9 +1202,6 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
   }
 
   Future<void> _load() async {
-    bool hala = true; // Fail closed: never auto-claim if the driver scope cannot be read.
-    try { hala = await DriverDeliveryRepository.instance.isHalaDriver(); } catch (_) {}
-    if (mounted) setState(() => _isHalaDriver = hala);
     bool online = false;
     try {
       online = await AuthService.instance.isDriverOnline().timeout(const Duration(seconds: 6));
@@ -1354,8 +1232,7 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
       _earningsSummary = earningsSummary;
       _loading = false;
     });
-    if (hala) _refreshHalaHomeOffers();
-    if (!hala && online && activeOrders.length < 10) _startOfferPolling();
+    if (online && activeOrders.length < 10) _startOfferPolling();
   }
 
   Future<void> _setOnline(bool value) async {
@@ -1369,7 +1246,7 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(value ? s.t('driverOnlineSubtitle') : s.t('driverOfflineSubtitle'))));
-      if (value && !_isHalaDriver) {
+      if (value) {
         if (_activeOrders.length < 10) {
           _startOfferPolling();
         }
@@ -1405,7 +1282,7 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
   }
 
   Future<void> _checkForDeliveryOffer() async {
-    if (_isHalaDriver || !_online || _checkingOffer || !mounted || _activeOrders.length >= 10) return;
+    if (!_online || _checkingOffer || !mounted || _activeOrders.length >= 10) return;
     setState(() => _checkingOffer = true);
     try {
       final offer = await DriverDeliveryRepository.instance.getNextAvailableOffer();
@@ -1721,29 +1598,6 @@ class _DriverHomeScreenState extends State<_DriverHomeScreen> {
                     ]),
                   ),
                   const SizedBox(height: 16),
-                  if (_isHalaDriver) ...[
-                    FilledButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const _HalaDirectedOffersScreen())),
-                      icon: const Icon(Icons.assignment_turned_in_outlined),
-                      label: const Text('طلبات هلا طلب — قبول أو رفض'),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (_isHalaDriver && _halaPendingOffers.isNotEmpty) ...[
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(color: const Color(0xFFFFF5EE),
-                        borderRadius: BorderRadius.circular(18)),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        Text('طلبات هلا طلب الجديدة (${_halaPendingOffers.length})',
-                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
-                        const SizedBox(height: 8),
-                        ..._halaPendingOffers.map(_halaHomeOfferCard),
-                      ]),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
                   if (_activeOrders.isNotEmpty) ...[
                     Container(
                       padding: const EdgeInsets.all(16),

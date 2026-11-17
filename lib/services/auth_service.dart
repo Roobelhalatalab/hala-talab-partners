@@ -436,56 +436,6 @@ class AuthService {
     return store;
   }
 
-  // Resolve the store's origin zone from its actual map coordinates.
-  // Karamlesh is an area of the Bakhdida origin zone, not a third store zone.
-  Future<Map<String, String>> resolveStoreOriginZone(double latitude, double longitude) async {
-    if (!latitude.isFinite || !longitude.isFinite || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-      throw StateError('STORE_LOCATION_INVALID');
-    }
-    final areas = await _client.from('hala_zone_areas')
-        .select('name, zone_id, boundary, hala_zones!inner(name, is_active)')
-        .eq('is_active', true)
-        .eq('hala_zones.is_active', true);
-    final matches = <Map<String, String>>[];
-    for (final area in areas) {
-      final boundary = area['boundary'];
-      if (boundary is! Map || boundary['type'] != 'Polygon') continue;
-      final coordinates = boundary['coordinates'];
-      if (coordinates is! List || coordinates.isEmpty || coordinates.first is! List) continue;
-      final ring = coordinates.first as List;
-      if (!_pointInsideRing(longitude, latitude, ring)) continue;
-      final zone = area['hala_zones'];
-      if (zone is! Map || area['zone_id'] == null) continue;
-      matches.add({
-        'id': area['zone_id'].toString(),
-        'name': (zone['name'] ?? '').toString(),
-        'area': (area['name'] ?? '').toString(),
-      });
-    }
-    if (matches.length != 1) {
-      throw StateError(matches.isEmpty ? 'STORE_OUTSIDE_DELIVERY_ZONES' : 'STORE_ZONE_BOUNDARIES_OVERLAP');
-    }
-    return matches.single;
-  }
-
-  static bool _pointInsideRing(double longitude, double latitude, List ring) {
-    var inside = false;
-    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      final a = ring[i];
-      final b = ring[j];
-      if (a is! List || b is! List || a.length < 2 || b.length < 2) continue;
-      final ax = (a[0] as num).toDouble();
-      final ay = (a[1] as num).toDouble();
-      final bx = (b[0] as num).toDouble();
-      final by = (b[1] as num).toDouble();
-      if ((ay > latitude) != (by > latitude) &&
-          longitude < (bx - ax) * (latitude - ay) / (by - ay) + ax) {
-        inside = !inside;
-      }
-    }
-    return inside;
-  }
-
   Future<Map<String, dynamic>> createStore({
     required String name,
     required String description,
@@ -499,19 +449,14 @@ class AuthService {
   }) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw const AuthException('User is not signed in');
-    if (latitude == null || longitude == null) {
-      throw StateError('STORE_LOCATION_REQUIRED');
-    }
-    final originZone = await resolveStoreOriginZone(latitude, longitude);
     final data = await _client.from('stores').insert({
-      'zone_id': originZone['id'],
       'owner_id': userId,
       'name': name.trim(),
       'description': description.trim().isEmpty ? null : description.trim(),
       'phone': _normalizeIraqiPhone(phone),
       'address_text': address.trim(),
-      'latitude': latitude,
-      'longitude': longitude,
+      'latitude': ?latitude,
+      'longitude': ?longitude,
       'business_type': businessType ?? 'general',
       'system_category_id': systemCategoryId,
       'delivery_available': deliveryAvailable,
@@ -785,38 +730,6 @@ class AuthService {
     }
   }
 
-  // Use the area id stored on the order. Do not infer the area from the store.
-  Future<void> _attachSavedDeliveryAreaNames(List<Map<String, dynamic>> orders) async {
-    final missing = <Map<String, dynamic>>[];
-    final ids = <String>{};
-    for (final order in orders) {
-      final saved = order['delivery_area_name']?.toString().trim() ?? '';
-      final areaId = order['delivery_area_id']?.toString().trim() ?? '';
-      if (saved.isNotEmpty && saved != 'null') continue;
-      if (areaId.isEmpty || areaId == 'null') continue;
-      missing.add(order);
-      ids.add(areaId);
-    }
-    if (ids.isEmpty) return;
-    try {
-      final rows = await _client
-          .from('hala_zone_areas')
-          .select('id, name')
-          .inFilter('id', ids.toList());
-      final names = <String, String>{
-        for (final row in rows)
-          if (row['id'] != null)
-            row['id'].toString(): (row['name']?.toString().trim() ?? ''),
-      };
-      for (final order in missing) {
-        final name = names[order['delivery_area_id'].toString()] ?? '';
-        if (name.isNotEmpty) order['delivery_area_name'] = name;
-      }
-    } catch (error) {
-      debugPrint('Saved delivery area lookup unavailable: $error');
-    }
-  }
-
   // Optional offer-title enrichment. Display only; never changes order totals.
   Future<void> _attachComboTitles(List<Map<String, dynamic>> orders) async {
     final ids = <String>{};
@@ -880,7 +793,6 @@ class AuthService {
     final order = Map<String, dynamic>.from(data);
     await _attachProductDescriptions([order]);
     await _attachComboTitles([order]);
-    await _attachSavedDeliveryAreaNames([order]);
     return order;
   }
 
@@ -896,7 +808,6 @@ class AuthService {
     final orders = List<Map<String, dynamic>>.from(data);
     await _attachProductDescriptions(orders);
     await _attachComboTitles(orders);
-    await _attachSavedDeliveryAreaNames(orders);
     return orders;
   }
 

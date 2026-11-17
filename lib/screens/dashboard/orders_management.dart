@@ -25,8 +25,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
   final Set<String> _updatingOrderIds = <String>{};
   final Set<String> _printingOrderIds = <String>{};
   final Map<String, Map<String, dynamic>> _printStates = <String, Map<String, dynamic>>{};
-  final Map<String, Map<String, dynamic>> _directedStatus = {};
-  final Set<String> _sendingDirected = {};
+  bool _selfDelivery = false;
 
   @override
   void initState() {
@@ -45,105 +44,6 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
     final channel = _ordersChannel;
     if (channel != null) Supabase.instance.client.removeChannel(channel);
     super.dispose();
-  }
-
-  bool _isDirectedZoneOrder(Map<String, dynamic> order) {
-    final id = order['id']?.toString() ?? '';
-    if (_sendingDirected.contains(id)) return false;
-    final state = _directedStatus[id]?['offer_state']?.toString();
-    if (state == 'pending' || state == 'accepted') return false;
-    if (_isPickupOrder(order) || order['driver_id'] != null || order['status'] != 'ready') return false;
-    for (final key in const ['delivery_area_name', 'customer_area_name', 'area_name']) {
-      final name = (order[key]?.toString() ?? '').trim();
-      if (name == 'كرمليس' || name == 'كارملش' || name == 'برطلة') return true;
-    }
-    return false;
-  }
-
-  Future<void> _sendHalaDriver(Map<String, dynamic> order) async {
-    final orderId = order['id']?.toString();
-    if (orderId == null || orderId.isEmpty) return;
-    try {
-      if (_sendingDirected.contains(orderId)) return;
-      setState(() => _sendingDirected.add(orderId));
-      final previous = await DriverDeliveryRepository.instance.getHalaDirectedOfferStatus(orderId);
-      if (previous != null && previous['offer_state'] != 'rejected' && previous['offer_state'] != 'cancelled' && previous['offer_state'] != 'expired') {
-        if (mounted) setState(() => _directedStatus[orderId] = previous);
-        return;
-      }
-      final ids = await DriverDeliveryRepository.instance.getNamedEligibleHalaDrivers(orderId);
-      if (!mounted) return;
-      if (ids.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا يوجد سائق هلا طلب مخصص لهذا الطلب')));
-        return;
-      }
-      final selected = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => SimpleDialog(
-          title: const Text('إرسال إلى سائق هلا طلب'),
-          children: [
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, '__all__'),
-              child: const Text('إرسال لجميع السائقين المخصصين',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            const Divider(),
-            ...ids.map((driver) => SimpleDialogOption(
-            onPressed: () => Navigator.pop(dialogContext, driver['driver_id']?.toString()),
-            child: Text(driver['driver_name']?.toString() ?? 'سائق هلا طلب'),
-          )),
-          ],
-        ),
-      );
-      if (selected == null) return;
-      if (selected == '__all__') {
-        await DriverDeliveryRepository.instance.broadcastHalaDirectedOffer(orderId);
-      } else {
-        await DriverDeliveryRepository.instance.sendHalaDirectedOffer(orderId: orderId, driverId: selected);
-      }
-      final status = await DriverDeliveryRepository.instance.getHalaDirectedOfferStatus(orderId);
-      if (!mounted) return;
-      if (status != null) setState(() => _directedStatus[orderId] = status);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال الطلب للسائق، بانتظار قبوله')));
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إرسال الطلب: $error')));
-    } finally {
-      if (mounted) setState(() => _sendingDirected.remove(orderId));
-    }
-  }
-
-  Future<void> _broadcastHalaDriver(Map<String, dynamic> order) async {
-    final orderId = order['id']?.toString() ?? '';
-    if (orderId.isEmpty || _sendingDirected.contains(orderId)) return;
-    setState(() => _sendingDirected.add(orderId));
-    try {
-      // Re-read server state: another device may have sent or accepted this order.
-      final current = await DriverDeliveryRepository.instance.getHalaDirectedOfferStatus(orderId);
-      if (current != null && (current['offer_state'] == 'pending' || current['offer_state'] == 'accepted')) {
-        if (mounted) setState(() => _directedStatus[orderId] = current);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('هذا الطلب مرسل مسبقاً أو تم قبوله')));
-        }
-        return;
-      }
-      final count = await DriverDeliveryRepository.instance.broadcastHalaDirectedOffer(orderId);
-      final latest = await DriverDeliveryRepository.instance.getHalaDirectedOfferStatus(orderId);
-      if (!mounted) return;
-      setState(() {
-        if (latest != null) _directedStatus[orderId] = latest;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('تم إرسال الطلب إلى $count من سائقي هلا طلب المخصصين')));
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر الإرسال للجميع: $error')));
-      }
-    } finally {
-      if (mounted) setState(() => _sendingDirected.remove(orderId));
-    }
   }
 
   Future<void> _subscribeToIncomingOrders() async {
@@ -229,43 +129,20 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
       });
     }
     try {
+      final store = await AuthService.instance.getCurrentStore();
       final orders = await OrdersRepository.instance.getOrders();
       if (!mounted) return;
       setState(() {
+        _selfDelivery = store?['self_delivery'] == true;
         _orders = orders;
         _error = null;
       });
       unawaited(_loadPrintStates(orders));
-      unawaited(_refreshDirectedStatuses(orders));
     } on PostgrestException catch (error) {
       if (!mounted) return;
       setState(() => _error = error.message);
     } finally {
       if (!silent && mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _refreshDirectedStatuses(List<Map<String, dynamic>> orders) async {
-    final candidates = orders.where((order) {
-      final area = (order['delivery_area_name'] ?? order['customer_area_name'] ?? order['area_name'] ?? '').toString();
-      return area == 'كرمليس' || area == 'كارملش' || area == 'برطلة';
-    }).take(30);
-    for (final order in candidates) {
-      final id = order['id']?.toString() ?? '';
-      if (id.isEmpty) continue;
-      try {
-        final status = await DriverDeliveryRepository.instance.getHalaDirectedOfferStatus(id);
-        if (!mounted) return;
-        setState(() {
-          if (status != null) {
-            _directedStatus[id] = status;
-          } else {
-            _directedStatus.remove(id);
-          }
-        });
-      } catch (_) {
-        // The order list remains usable if the read-only status RPC is unavailable.
-      }
     }
   }
 
@@ -419,12 +296,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
   void _showDetails(Map<String, dynamic> order) {
     showDialog<void>(
       context: context,
-      builder: (_) => _OrderDetailsDialog(
-        order: order,
-        onSendHalaDriver: _isDirectedZoneOrder(order)
-            ? () { Navigator.of(context, rootNavigator: true).pop(); _sendHalaDriver(order); }
-            : null,
-      ),
+      builder: (_) => _OrderDetailsDialog(order: order),
     );
   }
 
@@ -495,10 +367,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
                       ..._filteredOrders.map(
                         (order) => Padding(
                           padding: const EdgeInsets.only(bottom: 13),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                            _OrderCard(
+                          child: _OrderCard(
                             order: order,
                             onDetails: () => _showDetails(order),
                             isUpdating: _updatingOrderIds.contains(
@@ -509,36 +378,7 @@ class _OrdersManagementPageState extends State<_OrdersManagementPage> {
                             onPrint: () => _printOrder(order),
                             isPrinting: _printingOrderIds.contains(order['id']?.toString()),
                             printState: _printStates[order['id']?.toString()],
-                            allowStoreDelivery: true,
-                          ),
-                          if (_directedStatus[order['id']?.toString()] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                'سائق هلا طلب: ${_directedStatus[order['id']?.toString()]?['driver_name'] ?? 'سائق هلا طلب'} — ${_directedStatus[order['id']?.toString()]?['offer_state'] == 'accepted' ? 'تم القبول' : _directedStatus[order['id']?.toString()]?['offer_state'] == 'pending' ? 'بانتظار القبول' : _directedStatus[order['id']?.toString()]?['offer_state'] == 'rejected' ? 'رفض الطلب - يمكن إعادة الإرسال' : 'حالة التحويل: ${_directedStatus[order['id']?.toString()]?['offer_state']}'}',
-                              ),
-                            ),
-                          if (_isDirectedZoneOrder(order))
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 6,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: () => _sendHalaDriver(order),
-                                    icon: const Icon(Icons.person_outline),
-                                    label: const Text('اختيار سائق هلا طلب'),
-                                  ),
-                                  FilledButton.icon(
-                                    onPressed: () => _broadcastHalaDriver(order),
-                                    icon: const Icon(Icons.groups_outlined),
-                                    label: const Text('إرسال لجميع سائقي المنطقة'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            ],
+                            allowStoreDelivery: _selfDelivery && !_isPickupOrder(order) && order['driver_id'] == null,
                           ),
                         ),
                       ),
@@ -1627,9 +1467,8 @@ class _OrderStatusBadge extends StatelessWidget {
 }
 
 class _OrderDetailsDialog extends StatefulWidget {
-  const _OrderDetailsDialog({required this.order, this.onSendHalaDriver});
+  const _OrderDetailsDialog({required this.order});
   final Map<String, dynamic> order;
-  final VoidCallback? onSendHalaDriver;
 
   @override
   State<_OrderDetailsDialog> createState() => _OrderDetailsDialogState();
@@ -1765,20 +1604,6 @@ class _OrderDetailsDialogState extends State<_OrderDetailsDialog> {
     }
     final total = (order['total'] as num?)?.toDouble() ?? 0;
     final isPickup = _isPickupOrder(order);
-    // Read the delivery-area snapshot saved with this order, never the
-    // store's current origin zone or today's coverage settings.
-    String savedArea = '';
-    for (final key in const ['delivery_area_name', 'customer_area_name', 'area_name']) {
-      final value = order[key]?.toString().trim() ?? '';
-      if (value.isNotEmpty && value.toLowerCase() != 'null') {
-        savedArea = value;
-        break;
-      }
-    }
-    final feeValue = order['delivery_fee'];
-    final deliveryFee = feeValue is num
-        ? feeValue.toDouble()
-        : double.tryParse(feeValue?.toString() ?? '');
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       title: Row(
@@ -1821,17 +1646,6 @@ class _OrderDetailsDialogState extends State<_OrderDetailsDialog> {
                           ? 'استلام من المتجر'
                           : order['delivery_address'] as String? ?? '-',
                     ),
-                    if (!isPickup) ...[
-                      _DetailRow(
-                        label: 'منطقة التوصيل',
-                        value: savedArea.isEmpty ? 'غير محددة' : savedArea,
-                      ),
-                      if (deliveryFee != null && deliveryFee.isFinite && deliveryFee > 0)
-                        _DetailRow(
-                          label: 'أجرة التوصيل',
-                          value: '${deliveryFee.toStringAsFixed(0)} د.ع',
-                        ),
-                    ],
                     if ((order['notes'] as String?)?.isNotEmpty == true)
                       _DetailRow(
                         label: s.t('orderNotes'),
@@ -2044,12 +1858,6 @@ class _OrderDetailsDialogState extends State<_OrderDetailsDialog> {
         ),
       ),
       actions: [
-        if (widget.onSendHalaDriver != null)
-          OutlinedButton.icon(
-            onPressed: widget.onSendHalaDriver,
-            icon: const Icon(Icons.local_shipping_outlined),
-            label: const Text('إرسال إلى سائق هلا طلب'),
-          ),
         if (!isPickup)
           OutlinedButton.icon(
             onPressed: () => _openCustomerLocation(context),

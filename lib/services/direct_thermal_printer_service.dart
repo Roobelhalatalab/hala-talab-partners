@@ -25,12 +25,8 @@ class DirectPrinterDevice {
       name: map['name']?.toString() ?? 'Printer',
       transport: map['transport']?.toString() ?? '',
       address: map['address']?.toString(),
-      vendorId: map['vendorId'] is num
-          ? (map['vendorId'] as num).toInt()
-          : null,
-      productId: map['productId'] is num
-          ? (map['productId'] as num).toInt()
-          : null,
+      vendorId: map['vendorId'] is num ? (map['vendorId'] as num).toInt() : null,
+      productId: map['productId'] is num ? (map['productId'] as num).toInt() : null,
     );
   }
 }
@@ -44,31 +40,16 @@ class DirectPrintResult {
 
 class DirectThermalPrinterService {
   DirectThermalPrinterService._();
-  static final DirectThermalPrinterService instance =
-      DirectThermalPrinterService._();
+  static final DirectThermalPrinterService instance = DirectThermalPrinterService._();
 
-  static const MethodChannel _channel = MethodChannel(
-    'com.halatalab.partners/direct_printer',
-  );
+  static const MethodChannel _channel = MethodChannel('com.halatalab.partners/direct_printer');
 
-  bool get supported =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
-
-  String _nativeTransport(String transport) {
-    if (defaultTargetPlatform == TargetPlatform.iOS &&
-        transport == 'bluetooth_auto') {
-      return 'auto';
-    }
-    return transport;
-  }
+  bool get supported => !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
 
   Future<bool> requestBluetoothPermission() async {
     if (!supported) return false;
     try {
-      return await _channel.invokeMethod<bool>('requestBluetoothPermission') ??
-          false;
+      return await _channel.invokeMethod<bool>('requestBluetoothPermission') ?? false;
     } on PlatformException {
       return false;
     }
@@ -82,9 +63,7 @@ class DirectThermalPrinterService {
   Future<List<DirectPrinterDevice>> listDevices(String transport) async {
     if (!supported) return const [];
     try {
-      final raw = await _channel.invokeListMethod<dynamic>('listPrinters', {
-        'transport': _nativeTransport(transport),
-      });
+      final raw = await _channel.invokeListMethod<dynamic>('listPrinters', {'transport': transport});
       return (raw ?? const [])
           .whereType<Map>()
           .map((e) => DirectPrinterDevice.fromMap(e))
@@ -107,23 +86,15 @@ class DirectThermalPrinterService {
         message: 'اختبار الاتصال المباشر غير متاح على هذه المنصة',
       );
     }
-    if (transport != 'network' &&
-        (deviceId == null || deviceId.trim().isEmpty)) {
-      return const DirectPrintResult(
-        success: false,
-        message: 'اختر الطابعة الافتراضية أولًا',
-      );
+    if (transport != 'network' && (deviceId == null || deviceId.trim().isEmpty)) {
+      return const DirectPrintResult(success: false, message: 'اختر الطابعة الافتراضية أولًا');
     }
     if (transport == 'network' && (host == null || host.trim().isEmpty)) {
-      return const DirectPrintResult(
-        success: false,
-        message: 'أدخل عنوان IP للطابعة',
-      );
+      return const DirectPrintResult(success: false, message: 'أدخل عنوان IP للطابعة');
     }
     try {
-      final ok =
-          await _channel.invokeMethod<bool>('testConnection', {
-            'transport': _nativeTransport(transport),
+      final ok = await _channel.invokeMethod<bool>('testConnection', {
+            'transport': transport,
             'deviceId': deviceId,
             'host': host?.trim(),
             'port': port,
@@ -133,50 +104,28 @@ class DirectThermalPrinterService {
         success: ok,
         message: ok
             ? (transport == 'usb'
-                  ? 'اتصال USB متاح. هذا يؤكد الاتصال فقط؛ للطباعة المباشرة يجب أن تكون الطابعة حرارية وتدعم ESC/POS. للطابعات العامة استخدم خدمة الطباعة في الجهاز.'
-                  : (transport == 'ble'
-                        ? 'تم الاتصال بجهاز Bluetooth Low Energy والعثور على قناة كتابة للطباعة'
-                        : (transport == 'bluetooth_auto'
-                              ? 'تم التعرف على نوع Bluetooth والاتصال بالطابعة بنجاح'
-                              : 'الطابعة متصلة وجاهزة')))
+                ? 'اتصال USB متاح. هذا يؤكد الاتصال فقط؛ للطباعة المباشرة يجب أن تكون الطابعة حرارية وتدعم ESC/POS. للطابعات العامة استخدم خدمة الطباعة في الجهاز.'
+                : (transport == 'ble'
+                    ? 'تم الاتصال بجهاز Bluetooth Low Energy والعثور على قناة كتابة للطباعة'
+                    : 'الطابعة متصلة وجاهزة'))
             : 'تعذر الاتصال بالطابعة',
       );
     } on PlatformException catch (e) {
       if (e.code == 'BLUETOOTH_PERMISSION_REQUIRED') {
-        return const DirectPrintResult(
-          success: false,
-          message: 'اسمح للتطبيق بالوصول إلى Bluetooth ثم أعد الاختبار',
-        );
+        return const DirectPrintResult(success: false, message: 'اسمح للتطبيق بالوصول إلى Bluetooth ثم أعد الاختبار');
       }
-      if (e.code == 'IOS_CLASSIC_UNSUPPORTED' ||
-          e.code == 'IOS_USB_UNSUPPORTED' ||
-          e.code == 'IOS_TRANSPORT_UNSUPPORTED') {
-        return DirectPrintResult(
-          success: false,
-          message: e.message ?? 'طريقة الاتصال غير مدعومة على iPhone',
-        );
+      if (e.code == 'IOS_CLASSIC_UNSUPPORTED' || e.code == 'IOS_USB_UNSUPPORTED' || e.code == 'IOS_TRANSPORT_UNSUPPORTED') {
+        return DirectPrintResult(success: false, message: e.message ?? 'طريقة الاتصال غير مدعومة على iPhone');
       }
       if (e.code == 'USB_PERMISSION_REQUIRED') {
-        return const DirectPrintResult(
-          success: false,
-          message: 'وافق على صلاحية USB ثم أعد الاختبار',
-        );
+        return const DirectPrintResult(success: false, message: 'وافق على صلاحية USB ثم أعد الاختبار');
       }
       if (e.code == 'DEVICE_NOT_FOUND') {
-        return const DirectPrintResult(
-          success: false,
-          message: 'الطابعة الافتراضية غير متصلة حاليًا',
-        );
+        return const DirectPrintResult(success: false, message: 'الطابعة الافتراضية غير متصلة حاليًا');
       }
-      return DirectPrintResult(
-        success: false,
-        message: e.message ?? 'تعذر الاتصال بالطابعة',
-      );
+      return DirectPrintResult(success: false, message: e.message ?? 'تعذر الاتصال بالطابعة');
     } catch (e) {
-      return DirectPrintResult(
-        success: false,
-        message: 'تعذر الاتصال بالطابعة: $e',
-      );
+      return DirectPrintResult(success: false, message: 'تعذر الاتصال بالطابعة: $e');
     }
   }
 
@@ -193,23 +142,15 @@ class DirectThermalPrinterService {
     if (!supported) {
       return const DirectPrintResult(
         success: false,
-        message:
-            'الطباعة الحرارية المباشرة غير متاحة على هذه المنصة. استخدم طباعة النظام على هذا الجهاز.',
+        message: 'الطباعة الحرارية المباشرة غير متاحة على هذه المنصة. استخدم طباعة النظام على هذا الجهاز.',
       );
     }
 
-    if (transport != 'network' &&
-        (deviceId == null || deviceId.trim().isEmpty)) {
-      return const DirectPrintResult(
-        success: false,
-        message: 'اختر طابعة مباشرة أولًا',
-      );
+    if (transport != 'network' && (deviceId == null || deviceId.trim().isEmpty)) {
+      return const DirectPrintResult(success: false, message: 'اختر طابعة مباشرة أولًا');
     }
     if (transport == 'network' && (host == null || host.trim().isEmpty)) {
-      return const DirectPrintResult(
-        success: false,
-        message: 'أدخل عنوان IP للطابعة',
-      );
+      return const DirectPrintResult(success: false, message: 'أدخل عنوان IP للطابعة');
     }
 
     final images = <Uint8List>[];
@@ -218,16 +159,12 @@ class DirectThermalPrinterService {
         images.add(await page.toPng());
       }
       if (images.isEmpty) {
-        return const DirectPrintResult(
-          success: false,
-          message: 'تعذر تجهيز ورقة الطباعة',
-        );
+        return const DirectPrintResult(success: false, message: 'تعذر تجهيز ورقة الطباعة');
       }
 
       final widthPx = _targetWidthPixels(paperWidthMm);
-      final ok =
-          await _channel.invokeMethod<bool>('printRaster', {
-            'transport': _nativeTransport(transport),
+      final ok = await _channel.invokeMethod<bool>('printRaster', {
+            'transport': transport,
             'deviceId': deviceId,
             'host': host?.trim(),
             'port': port,
@@ -239,54 +176,31 @@ class DirectThermalPrinterService {
           false;
       return DirectPrintResult(
         success: ok,
-        message: ok
-            ? 'تم إرسال الطلب للطابعة الحرارية مباشرة'
-            : 'لم تكتمل الطباعة المباشرة',
+        message: ok ? 'تم إرسال الطلب للطابعة الحرارية مباشرة' : 'لم تكتمل الطباعة المباشرة',
       );
     } on PlatformException catch (e) {
       final code = e.code;
       if (code == 'BLUETOOTH_PERMISSION_REQUIRED') {
-        return const DirectPrintResult(
-          success: false,
-          message: 'اسمح للتطبيق بالوصول إلى أجهزة Bluetooth ثم أعد المحاولة',
-        );
+        return const DirectPrintResult(success: false, message: 'اسمح للتطبيق بالوصول إلى أجهزة Bluetooth ثم أعد المحاولة');
       }
-      if (code == 'IOS_CLASSIC_UNSUPPORTED' ||
-          code == 'IOS_USB_UNSUPPORTED' ||
-          code == 'IOS_TRANSPORT_UNSUPPORTED') {
-        return DirectPrintResult(
-          success: false,
-          message: e.message ?? 'طريقة الاتصال غير مدعومة على iPhone',
-        );
+      if (code == 'IOS_CLASSIC_UNSUPPORTED' || code == 'IOS_USB_UNSUPPORTED' || code == 'IOS_TRANSPORT_UNSUPPORTED') {
+        return DirectPrintResult(success: false, message: e.message ?? 'طريقة الاتصال غير مدعومة على iPhone');
       }
       if (code == 'USB_PERMISSION_REQUIRED') {
-        return const DirectPrintResult(
-          success: false,
-          message: 'تم طلب صلاحية طابعة USB. وافق عليها ثم أعد الطباعة',
-        );
+        return const DirectPrintResult(success: false, message: 'تم طلب صلاحية طابعة USB. وافق عليها ثم أعد الطباعة');
       }
       if (code == 'DEVICE_NOT_FOUND') {
-        return const DirectPrintResult(
-          success: false,
-          message: 'الطابعة المختارة غير متصلة حاليًا',
-        );
+        return const DirectPrintResult(success: false, message: 'الطابعة المختارة غير متصلة حاليًا');
       }
       if (code == 'PRINT_FAILED' && transport == 'usb') {
         return DirectPrintResult(
           success: false,
-          message:
-              '${e.message ?? 'فشلت الطباعة المباشرة'}. إذا كانت الطابعة ليست حرارية ESC/POS (مثل الطابعات المكتبية)، استخدم خدمة الطباعة في الجهاز.',
+          message: '${e.message ?? 'فشلت الطباعة المباشرة'}. إذا كانت الطابعة ليست حرارية ESC/POS (مثل الطابعات المكتبية)، استخدم خدمة الطباعة في الجهاز.',
         );
       }
-      return DirectPrintResult(
-        success: false,
-        message: e.message ?? 'فشلت الطباعة المباشرة',
-      );
+      return DirectPrintResult(success: false, message: e.message ?? 'فشلت الطباعة المباشرة');
     } catch (e) {
-      return DirectPrintResult(
-        success: false,
-        message: 'فشلت الطباعة المباشرة: $e',
-      );
+      return DirectPrintResult(success: false, message: 'فشلت الطباعة المباشرة: $e');
     }
   }
 
